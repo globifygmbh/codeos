@@ -136,11 +136,56 @@ export interface LogEntry {
   source: string;
 }
 
+// ── Project log ───────────────────────────────────────────────────────────────
+
+export interface ProjectLogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+  source: string;
+}
+
+// ── Command output (agent tool use) ──────────────────────────────────────────
+
+export interface CommandOutput {
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+  duration_ms: number;
+  command: string;
+}
+
+// ── Tool call / result blocks (shown inside chat messages) ───────────────────
+
+export interface ToolCallEvent {
+  call_id: string;
+  command: string;
+  round: number;
+}
+
+export interface ToolResultEvent {
+  call_id: string;
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+  duration_ms: number;
+}
+
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+
+export interface ToolCall {
+  call_id: string;
+  command: string;
+  stdout?: string;
+  stderr?: string;
+  exit_code?: number;
+  duration_ms?: number;
+  running?: boolean;
+}
 
 export interface ChatMessage {
   id: string;          // frontend-only, for React keys
@@ -148,6 +193,8 @@ export interface ChatMessage {
   content: ContentBlock[] | string;
   streaming?: boolean; // true while the assistant is still writing
   error?: string;
+  // Tool calls made by this assistant message
+  toolCalls?: ToolCall[];
 }
 
 export interface ClaudeModel {

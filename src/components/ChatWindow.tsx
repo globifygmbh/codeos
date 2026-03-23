@@ -3,17 +3,21 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   Camera,
+  CheckCircle,
   ChevronDown,
+  ChevronRight,
   Image,
   Loader,
   Send,
+  Terminal,
   Trash2,
   Upload,
+  XCircle,
   GitBranch,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../stores/store";
-import type { ChatMessage, ContentBlock } from "../types";
+import type { ChatMessage, ContentBlock, ToolCall, ToolCallEvent, ToolResultEvent } from "../types";
 import MarkdownMessage from "./MarkdownMessage";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -37,12 +41,10 @@ function getImageBlocks(msg: ChatMessage): Array<{ data: string; media_type: str
     .map((b) => (b as any).source);
 }
 
-// ── Pending image attachment ──────────────────────────────────────────────────
-
 interface PendingImage {
-  data: string;       // base64
+  data: string;
   media_type: string;
-  preview: string;    // data URL for <img>
+  preview: string;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -60,6 +62,7 @@ export default function ChatWindow() {
     setChatProject,
     addChatMessage,
     updateLastAssistantMessage,
+    upsertToolCall,
     clearChat,
     loadChatModels,
   } = useStore();
@@ -81,7 +84,6 @@ export default function ChatWindow() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
 
-  // Auto-resize textarea
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -92,12 +94,9 @@ export default function ChatWindow() {
   const selectedProject = projects.find((p) => p.id === chatProjectId) ?? null;
   const gitStatus = chatProjectId ? gitStatuses[chatProjectId] : null;
 
-  // ── Streaming listener ────────────────────────────────────────────────────────
-
   async function sendMessage() {
     if ((!input.trim() && pendingImages.length === 0) || chatStreaming) return;
 
-    // Build content blocks
     const contentBlocks: ContentBlock[] = [];
     for (const img of pendingImages) {
       contentBlocks.push({
@@ -120,7 +119,6 @@ export default function ChatWindow() {
     setInput("");
     setPendingImages([]);
 
-    // Placeholder for assistant response
     const streamId = uid();
     const assistantMsg: ChatMessage = {
       id: uid(),
@@ -130,21 +128,25 @@ export default function ChatWindow() {
     };
     addChatMessage(assistantMsg);
 
-    // Register listeners before invoking
-    const unlistenChunk = await listen<string>(`claude-chunk-${streamId}`, (ev) => {
-      updateLastAssistantMessage(ev.payload, false);
+    const unlistenChunk  = await listen<string>(`claude-chunk-${streamId}`,  (ev) => updateLastAssistantMessage(ev.payload, false));
+    const unlistenDone   = await listen(`claude-done-${streamId}`,            ()    => updateLastAssistantMessage("", true));
+    const unlistenError  = await listen<string>(`claude-error-${streamId}`,  (ev) => updateLastAssistantMessage(`\n\n⚠ Error: ${ev.payload}`, true));
+    const unlistenTool   = await listen<ToolCallEvent>(`claude-tool-call-${streamId}`, (ev) => {
+      upsertToolCall(ev.payload.call_id, { command: ev.payload.command, running: true });
     });
-    const unlistenDone = await listen(`claude-done-${streamId}`, () => {
-      updateLastAssistantMessage("", true);
-    });
-    const unlistenError = await listen<string>(`claude-error-${streamId}`, (ev) => {
-      updateLastAssistantMessage(`\n\n⚠ Error: ${ev.payload}`, true);
+    const unlistenResult = await listen<ToolResultEvent>(`claude-tool-result-${streamId}`, (ev) => {
+      upsertToolCall(ev.payload.call_id, {
+        stdout: ev.payload.stdout,
+        stderr: ev.payload.stderr,
+        exit_code: ev.payload.exit_code,
+        duration_ms: ev.payload.duration_ms,
+        running: false,
+      });
     });
 
-    // Build messages for API (exclude the placeholder assistant message)
     const apiMessages = useStore
       .getState()
-      .chatMessages.slice(0, -1) // exclude the empty placeholder
+      .chatMessages.slice(0, -1)
       .map((m) => ({ role: m.role, content: m.content }));
 
     try {
@@ -152,29 +154,21 @@ export default function ChatWindow() {
         messages: apiMessages,
         model: chatModel,
         projectPath: selectedProject?.path ?? null,
+        projectId: selectedProject?.id ?? null,
         projectName: selectedProject?.name ?? null,
         streamId,
       });
     } catch (e) {
       updateLastAssistantMessage(`\n\n⚠ Error: ${String(e)}`, true);
     } finally {
-      unlistenChunk();
-      unlistenDone();
-      unlistenError();
+      unlistenChunk(); unlistenDone(); unlistenError(); unlistenTool(); unlistenResult();
     }
   }
 
   async function takeScreenshot() {
     try {
       const data = await invoke<string>("take_screenshot");
-      setPendingImages((prev) => [
-        ...prev,
-        {
-          data,
-          media_type: "image/png",
-          preview: `data:image/png;base64,${data}`,
-        },
-      ]);
+      setPendingImages((prev) => [...prev, { data, media_type: "image/png", preview: `data:image/png;base64,${data}` }]);
     } catch (e) {
       useStore.getState().setGlobalError("Screenshot failed: " + String(e));
     }
@@ -185,14 +179,7 @@ export default function ChatWindow() {
     if (!path || typeof path !== "string") return;
     try {
       const result = await invoke<{ data: string; media_type: string }>("read_image_as_base64", { path });
-      setPendingImages((prev) => [
-        ...prev,
-        {
-          data: result.data,
-          media_type: result.media_type,
-          preview: `data:${result.media_type};base64,${result.data}`,
-        },
-      ]);
+      setPendingImages((prev) => [...prev, { data: result.data, media_type: result.media_type, preview: `data:${result.media_type};base64,${result.data}` }]);
     } catch (e) {
       useStore.getState().setGlobalError("Failed to load image: " + String(e));
     }
@@ -203,8 +190,8 @@ export default function ChatWindow() {
     setCommitLoading(true);
     try {
       await invoke("git_stage_all", { projectPath: selectedProject.path });
-      await invoke("git_commit", { projectPath: selectedProject.path, message: commitMsg.trim() });
-      await invoke("git_push", { projectPath: selectedProject.path });
+      await invoke("git_commit",    { projectPath: selectedProject.path, message: commitMsg.trim() });
+      await invoke("git_push",      { projectPath: selectedProject.path });
       setCommitMsg("");
       await useStore.getState().fetchGitStatus(selectedProject.id, selectedProject.path);
     } catch (e) {
@@ -225,7 +212,7 @@ export default function ChatWindow() {
 
   return (
     <div className="view-enter flex h-full flex-col">
-      {/* ── Top bar ──────────────────────────────────────────────────────────── */}
+      {/* ── Top bar ───────────────────────────────────────────────────────────── */}
       <div className="flex shrink-0 items-center gap-3 border-b px-5 py-3"
         style={{ borderColor: "var(--border-color)" }}>
 
@@ -263,7 +250,7 @@ export default function ChatWindow() {
           className="rounded-lg border px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent-blue/50"
           style={{ background: "var(--surface-2)", borderColor: "var(--border-color)", color: "var(--text-primary)" }}
         >
-          <option value="">No project</option>
+          <option value="">Kein Projekt</option>
           {projects.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
@@ -276,23 +263,30 @@ export default function ChatWindow() {
             <GitBranch size={11} className="text-accent-blue" />
             <span className="font-mono">{gitStatus.branch}</span>
             {gitStatus.behind > 0 && <span className="text-accent-yellow">↓{gitStatus.behind}</span>}
-            {gitStatus.ahead > 0 && <span className="text-accent-blue">↑{gitStatus.ahead}</span>}
+            {gitStatus.ahead  > 0 && <span className="text-accent-blue">↑{gitStatus.ahead}</span>}
+          </div>
+        )}
+
+        {/* Tool-use indicator */}
+        {selectedProject && (
+          <div className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px]"
+            style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+            <Terminal size={10} className="text-accent-purple" />
+            <span>bash-Tool aktiv</span>
           </div>
         )}
 
         <div className="flex-1" />
 
-        {/* Clear */}
         <button
           onClick={clearChat}
           className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-[var(--text-muted)] transition hover:bg-[var(--surface-2)] hover:text-accent-red"
         >
-          <Trash2 size={12} />
-          Clear
+          <Trash2 size={12} /> Clear
         </button>
       </div>
 
-      {/* ── Messages ─────────────────────────────────────────────────────────── */}
+      {/* ── Messages ──────────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {chatMessages.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center py-16 text-center">
@@ -301,11 +295,13 @@ export default function ChatWindow() {
             </div>
             <p className="mb-1 text-sm font-medium text-[var(--text-primary)]">Claude AI</p>
             <p className="text-xs text-[var(--text-secondary)]">
-              Select a project above and start coding. Use ⌘↵ to send.
+              Wähle ein Projekt und starte. Claude kann Pakete installieren, Dateien lesen und Befehle ausführen. ⌘↵ zum Senden.
             </p>
             {selectedProject && (
               <p className="mt-2 text-xs text-[var(--text-muted)]">
-                Context: <span className="text-accent-blue font-mono">{selectedProject.name}</span>
+                Projekt: <span className="text-accent-blue font-mono">{selectedProject.name}</span>
+                {" · "}
+                <span className="text-accent-purple">bash-Tool verfügbar</span>
               </p>
             )}
           </div>
@@ -317,20 +313,20 @@ export default function ChatWindow() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* ── Commit & Push bar (shown when project has changes) ────────────────── */}
+      {/* ── Commit & Push bar ─────────────────────────────────────────────────── */}
       {selectedProject && gitStatus && (gitStatus.modified_files.length > 0 || gitStatus.staged_files.length > 0) && (
         <div className="shrink-0 border-t px-5 py-3"
           style={{ borderColor: "var(--border-color)", background: "var(--surface-1)" }}>
           <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)] mb-2">
-            <span>{gitStatus.modified_files.length + gitStatus.staged_files.length} changed file{(gitStatus.modified_files.length + gitStatus.staged_files.length) > 1 ? "s" : ""}</span>
-            {gitStatus.ahead > 0 && <span className="text-accent-blue">· {gitStatus.ahead} unpushed commit{gitStatus.ahead > 1 ? "s" : ""}</span>}
+            <span>{gitStatus.modified_files.length + gitStatus.staged_files.length} geänderte Datei(en)</span>
+            {gitStatus.ahead > 0 && <span className="text-accent-blue">· {gitStatus.ahead} nicht gepusht</span>}
           </div>
           <div className="flex gap-2">
             <input
               type="text"
               value={commitMsg}
               onChange={(e) => setCommitMsg(e.target.value)}
-              placeholder="Commit message…"
+              placeholder="Commit-Nachricht…"
               className="flex-1 rounded-lg border px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-accent-blue/50"
               style={{ background: "var(--surface-2)", borderColor: "var(--border-color)", color: "var(--text-primary)" }}
               onKeyDown={(e) => { if (e.key === "Enter" && commitMsg.trim()) handleCommitAndPush(); }}
@@ -347,11 +343,8 @@ export default function ChatWindow() {
         </div>
       )}
 
-      {/* ── Input area ───────────────────────────────────────────────────────── */}
-      <div className="shrink-0 border-t p-4"
-        style={{ borderColor: "var(--border-color)" }}>
-
-        {/* Pending image thumbnails */}
+      {/* ── Input area ────────────────────────────────────────────────────────── */}
+      <div className="shrink-0 border-t p-4" style={{ borderColor: "var(--border-color)" }}>
         {pendingImages.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {pendingImages.map((img, i) => (
@@ -370,47 +363,38 @@ export default function ChatWindow() {
 
         <div className="flex items-end gap-2 rounded-xl border p-2 focus-within:ring-1 focus-within:ring-accent-blue/40"
           style={{ borderColor: "var(--border-color)", background: "var(--surface-1)" }}>
-          {/* Attachment buttons */}
           <div className="flex shrink-0 gap-1 pb-0.5">
-            <button
-              onClick={attachImage}
-              title="Attach image"
-              className="rounded-lg p-1.5 text-[var(--text-muted)] transition hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]"
-            >
+            <button onClick={attachImage} title="Bild anhängen"
+              className="rounded-lg p-1.5 text-[var(--text-muted)] transition hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]">
               <Image size={15} />
             </button>
-            <button
-              onClick={takeScreenshot}
-              title="Take screenshot"
-              className="rounded-lg p-1.5 text-[var(--text-muted)] transition hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]"
-            >
+            <button onClick={takeScreenshot} title="Screenshot"
+              className="rounded-lg p-1.5 text-[var(--text-muted)] transition hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]">
               <Camera size={15} />
             </button>
           </div>
 
-          {/* Textarea */}
           <textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask Claude… (⌘↵ to send)"
+            placeholder="Claude fragen… (⌘↵ senden) — Claude kann Pakete installieren & Befehle ausführen"
             rows={1}
             className="auto-resize flex-1 bg-transparent text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
           />
 
-          {/* Send */}
           <button
             disabled={(!input.trim() && pendingImages.length === 0) || chatStreaming}
             onClick={sendMessage}
             className="shrink-0 rounded-lg bg-accent-blue p-2 text-white transition hover:bg-accent-blue/80 disabled:opacity-40"
-            title="Send (⌘↵)"
+            title="Senden (⌘↵)"
           >
             {chatStreaming ? <Loader size={14} className="animate-spin" /> : <Send size={14} />}
           </button>
         </div>
         <p className="mt-1.5 text-center text-[10px] text-[var(--text-muted)]">
-          ⌘↵ send · attach images with 📎 or take a screenshot with 📷
+          ⌘↵ senden · 📎 Bild · 📷 Screenshot · Claude kann bash-Befehle ausführen wenn ein Projekt gewählt ist
         </p>
       </div>
     </div>
@@ -421,7 +405,7 @@ export default function ChatWindow() {
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
-  const text = getTextContent(msg);
+  const text   = getTextContent(msg);
   const images = getImageBlocks(msg);
 
   return (
@@ -436,56 +420,98 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
       </div>
 
       {/* Bubble */}
-      <div className={`group relative max-w-[78%] rounded-2xl px-4 py-2.5 ${
-        isUser
-          ? "rounded-tr-sm"
-          : "rounded-tl-sm"
-      }`}
-        style={{
-          background: isUser ? "var(--surface-3)" : "var(--surface-1)",
-          border: isUser ? "none" : "1px solid var(--border-color)",
-        }}>
+      <div className="group flex max-w-[80%] flex-col gap-2">
+        <div className={`relative rounded-2xl px-4 py-2.5 ${isUser ? "rounded-tr-sm" : "rounded-tl-sm"}`}
+          style={{
+            background: isUser ? "var(--surface-3)" : "var(--surface-1)",
+            border: isUser ? "none" : "1px solid var(--border-color)",
+          }}>
+          {images.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {images.map((img, i) => (
+                <img key={i} src={`data:${img.media_type};base64,${img.data}`}
+                  alt="attachment" className="max-h-48 max-w-full rounded-lg object-contain" />
+              ))}
+            </div>
+          )}
 
-        {/* Image attachments */}
-        {images.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-2">
-            {images.map((img, i) => (
-              <img
-                key={i}
-                src={`data:${img.media_type};base64,${img.data}`}
-                alt="attachment"
-                className="max-h-48 max-w-full rounded-lg object-contain"
-              />
+          {isUser ? (
+            <p className="text-sm text-[var(--text-primary)] whitespace-pre-wrap">{text}</p>
+          ) : (
+            <MarkdownMessage content={text} streaming={msg.streaming} />
+          )}
+
+          {msg.error && <p className="mt-1 text-xs text-accent-red">{msg.error}</p>}
+        </div>
+
+        {/* Tool call cards (shown below the bubble) */}
+        {msg.toolCalls && msg.toolCalls.length > 0 && (
+          <div className="flex flex-col gap-1.5 pl-1">
+            {msg.toolCalls.map((tc) => (
+              <ToolCallCard key={tc.call_id} tc={tc} />
             ))}
           </div>
-        )}
-
-        {/* Text */}
-        {isUser ? (
-          <p className="text-sm text-[var(--text-primary)] whitespace-pre-wrap">{text}</p>
-        ) : (
-          <MarkdownMessage content={text} streaming={msg.streaming} />
-        )}
-
-        {msg.error && (
-          <p className="mt-1 text-xs text-accent-red">{msg.error}</p>
         )}
       </div>
     </div>
   );
 }
 
-function getTextContent(msg: ChatMessage): string {
-  if (typeof msg.content === "string") return msg.content;
-  return (msg.content as ContentBlock[])
-    .filter((b) => b.type === "text")
-    .map((b) => (b as any).text as string)
-    .join("");
-}
+// ── Tool call card ────────────────────────────────────────────────────────────
 
-function getImageBlocks(msg: ChatMessage): Array<{ data: string; media_type: string }> {
-  if (typeof msg.content === "string") return [];
-  return (msg.content as ContentBlock[])
-    .filter((b) => b.type === "image")
-    .map((b) => (b as any).source);
+function ToolCallCard({ tc }: { tc: ToolCall }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasOutput = !!(tc.stdout || tc.stderr);
+  const success   = tc.exit_code === 0;
+
+  return (
+    <div className="rounded-lg border overflow-hidden"
+      style={{ borderColor: "var(--border-color)", background: "var(--surface-2)" }}>
+      {/* Header row */}
+      <button
+        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+        onClick={() => hasOutput && setExpanded((v) => !v)}
+      >
+        {tc.running ? (
+          <Loader size={11} className="shrink-0 animate-spin text-accent-purple" />
+        ) : success ? (
+          <CheckCircle size={11} className="shrink-0 text-accent-green" />
+        ) : (
+          <XCircle size={11} className="shrink-0 text-accent-red" />
+        )}
+
+        <Terminal size={11} className="shrink-0 text-[var(--text-muted)]" />
+
+        <code className="flex-1 truncate font-mono text-[11px] text-[var(--text-primary)]">
+          {tc.command}
+        </code>
+
+        {tc.duration_ms !== undefined && !tc.running && (
+          <span className="shrink-0 text-[10px] text-[var(--text-muted)]">{tc.duration_ms}ms</span>
+        )}
+
+        {hasOutput && (
+          <span className="shrink-0 text-[var(--text-muted)]">
+            {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          </span>
+        )}
+      </button>
+
+      {/* Expandable output */}
+      {expanded && hasOutput && (
+        <div className="border-t px-3 pb-3 pt-2" style={{ borderColor: "var(--border-color)" }}>
+          {tc.stdout && tc.stdout.trim() && (
+            <pre className="mb-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-[var(--text-secondary)]">
+              {tc.stdout.trim()}
+            </pre>
+          )}
+          {tc.stderr && tc.stderr.trim() && (
+            <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-accent-red">
+              {tc.stderr.trim()}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }

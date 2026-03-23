@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod git;
 pub mod mysql_mgr;
+pub mod project_logs;
 pub mod projects;
 pub mod services;
 pub mod settings;

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::commands::project_logs::{execute_in_dir, write_project_log};
 use crate::config;
 use crate::log_store::LogStore;
 use crate::models::LogLevel;
@@ -56,31 +57,24 @@ pub fn get_claude_models() -> Vec<serde_json::Value> {
 
 // ── Message types ─────────────────────────────────────────────────────────────
 
-/// A single text or image content block for the Claude API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
-    Text {
-        text: String,
-    },
-    Image {
-        source: ImageSource,
-    },
+    Text { text: String },
+    Image { source: ImageSource },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageSource {
     #[serde(rename = "type")]
-    pub source_type: String, // "base64"
-    pub media_type: String,  // "image/png" | "image/jpeg" | "image/webp" | "image/gif"
-    pub data: String,        // base64-encoded bytes
+    pub source_type: String,
+    pub media_type: String,
+    pub data: String,
 }
 
-/// A chat message from the frontend — content may be either a plain string
-/// (text-only) or a list of ContentBlock (text + images).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
-    pub role: String, // "user" | "assistant"
+    pub role: String,
     pub content: ChatContent,
 }
 
@@ -91,7 +85,6 @@ pub enum ChatContent {
     Blocks(Vec<ContentBlock>),
 }
 
-/// Converts ChatContent to the form accepted by the Anthropic API.
 fn content_to_api_value(content: &ChatContent) -> serde_json::Value {
     match content {
         ChatContent::Text(t) => serde_json::json!(t),
@@ -99,9 +92,13 @@ fn content_to_api_value(content: &ChatContent) -> serde_json::Value {
     }
 }
 
-// ── System prompt builder ─────────────────────────────────────────────────────
+// ── System prompt ─────────────────────────────────────────────────────────────
 
-fn build_system_prompt(project_path: Option<&str>, project_name: Option<&str>) -> String {
+fn build_system_prompt(
+    project_path: Option<&str>,
+    project_name: Option<&str>,
+    has_tools: bool,
+) -> String {
     let mut system = String::from(
         "You are Claude, an expert software engineer embedded in CodeOS — a local macOS \
          development environment manager. You specialise in PHP, HTML, CSS, JavaScript, \
@@ -117,19 +114,180 @@ fn build_system_prompt(project_path: Option<&str>, project_name: Option<&str>) -
         ));
     }
 
+    if has_tools {
+        system.push_str(
+            "\n\n## Tool use\n\
+             You have access to a `bash` tool that executes shell commands inside the project \
+             directory. Use it to:\n\
+             - Install packages: `npm install <pkg>`, `composer require <pkg>`, `pip install <pkg>`\n\
+             - Read files: `cat package.json`, `ls -la src/`\n\
+             - Run build tools: `npm run build`, `npx tailwindcss ...`\n\
+             - Check installed versions: `node --version`, `php --version`\n\
+             Always prefer using the tool over asking the user to run commands manually. \
+             After installing something, verify it worked by checking the output or reading \
+             a relevant file.",
+        );
+    }
+
     system
 }
 
-// ── Streaming chat command ────────────────────────────────────────────────────
+// ── Tool definitions ──────────────────────────────────────────────────────────
 
-/// Send a chat message to the Claude API and stream the response back
-/// via Tauri events: `claude-chunk-<stream_id>` and `claude-done-<stream_id>`.
+fn bash_tool_definition() -> serde_json::Value {
+    serde_json::json!({
+        "name": "bash",
+        "description": "Run a shell command in the project's root directory. \
+                         Use this to install packages, read files, run build tools, \
+                         or inspect the project structure.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The bash command to execute (e.g. 'npm install tailwindcss', 'cat package.json')"
+                }
+            },
+            "required": ["command"]
+        }
+    })
+}
+
+// ── Streaming helpers ─────────────────────────────────────────────────────────
+
+/// A content block being accumulated from the SSE stream.
+#[derive(Debug)]
+enum StreamBlock {
+    Text { index: usize, text: String },
+    ToolUse { index: usize, id: String, name: String, input_json: String },
+}
+
+/// Result of draining one full streaming response.
+struct StreamResult {
+    text_blocks: Vec<String>,
+    tool_use_blocks: Vec<(String, String, String)>, // (id, name, input_json)
+    stop_reason: String,
+}
+
+async fn drain_stream(
+    response: reqwest::Response,
+    app: &AppHandle,
+    stream_id: &str,
+    emit_chunks: bool,
+) -> Result<StreamResult, String> {
+    let mut byte_stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut blocks: Vec<StreamBlock> = Vec::new();
+    let mut stop_reason = String::from("end_turn");
+
+    'outer: while let Some(chunk) = byte_stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        loop {
+            let Some(event_end) = buffer.find("\n\n") else {
+                break;
+            };
+            let event_text = buffer[..event_end].to_string();
+            buffer = buffer[event_end + 2..].to_string();
+
+            let Some(data) = event_text
+                .lines()
+                .find(|l| l.starts_with("data: "))
+                .map(|l| l[6..].to_string())
+            else {
+                continue;
+            };
+
+            if data.trim() == "[DONE]" {
+                break 'outer;
+            }
+
+            let Ok(ev) = serde_json::from_str::<serde_json::Value>(&data) else {
+                continue;
+            };
+
+            match ev.get("type").and_then(|t| t.as_str()) {
+                // Start a new content block
+                Some("content_block_start") => {
+                    let index = ev.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                    let cb = ev.get("content_block");
+                    match cb.and_then(|b| b.get("type")).and_then(|t| t.as_str()) {
+                        Some("text") => blocks.push(StreamBlock::Text { index, text: String::new() }),
+                        Some("tool_use") => {
+                            let id = cb.and_then(|b| b.get("id")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let name = cb.and_then(|b| b.get("name")).and_then(|v| v.as_str()).unwrap_or("bash").to_string();
+                            blocks.push(StreamBlock::ToolUse { index, id, name, input_json: String::new() });
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Delta into an existing block
+                Some("content_block_delta") => {
+                    let index = ev.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                    let delta = ev.get("delta");
+                    let delta_type = delta.and_then(|d| d.get("type")).and_then(|t| t.as_str());
+
+                    match delta_type {
+                        Some("text_delta") => {
+                            let text = delta.and_then(|d| d.get("text")).and_then(|t| t.as_str()).unwrap_or("");
+                            if emit_chunks {
+                                app.emit(&format!("claude-chunk-{}", stream_id), text).ok();
+                            }
+                            if let Some(b) = blocks.iter_mut().find(|b| matches!(b, StreamBlock::Text { index: i, .. } if *i == index)) {
+                                if let StreamBlock::Text { text: t, .. } = b {
+                                    t.push_str(text);
+                                }
+                            }
+                        }
+                        Some("input_json_delta") => {
+                            let partial = delta.and_then(|d| d.get("partial_json")).and_then(|v| v.as_str()).unwrap_or("");
+                            if let Some(b) = blocks.iter_mut().find(|b| matches!(b, StreamBlock::ToolUse { index: i, .. } if *i == index)) {
+                                if let StreamBlock::ToolUse { input_json, .. } = b {
+                                    input_json.push_str(partial);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                Some("message_delta") => {
+                    if let Some(reason) = ev.get("delta").and_then(|d| d.get("stop_reason")).and_then(|r| r.as_str()) {
+                        stop_reason = reason.to_string();
+                    }
+                }
+
+                Some("message_stop") => break 'outer,
+                _ => {}
+            }
+        }
+    }
+
+    let mut text_blocks = Vec::new();
+    let mut tool_use_blocks = Vec::new();
+
+    for block in blocks {
+        match block {
+            StreamBlock::Text { text, .. } if !text.is_empty() => text_blocks.push(text),
+            StreamBlock::ToolUse { id, name, input_json, .. } => tool_use_blocks.push((id, name, input_json)),
+            _ => {}
+        }
+    }
+
+    Ok(StreamResult { text_blocks, tool_use_blocks, stop_reason })
+}
+
+// ── Main send command ─────────────────────────────────────────────────────────
+
 #[tauri::command]
 pub async fn claude_send_message(
     app: AppHandle,
     messages: Vec<ChatMessage>,
     model: String,
     project_path: Option<String>,
+    project_id: Option<String>,
     project_name: Option<String>,
     stream_id: String,
     logs: State<'_, LogStore>,
@@ -138,23 +296,18 @@ pub async fn claude_send_message(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "Claude API key not configured. Add it in Settings → Claude API.".to_string())?;
 
-    // Validate model to prevent arbitrary strings reaching the API.
     let model = match model.as_str() {
         "claude-sonnet-4-6" | "claude-opus-4-6" | "claude-haiku-4-5-20251001" => model,
         _ => "claude-sonnet-4-6".to_string(),
     };
 
-    let system = build_system_prompt(project_path.as_deref(), project_name.as_deref());
+    // Enable tool use only when a project with a path is selected
+    let enable_tools = project_path.is_some();
+    let system = build_system_prompt(project_path.as_deref(), project_name.as_deref(), enable_tools);
 
-    // Convert messages to Anthropic API format.
-    let api_messages: Vec<serde_json::Value> = messages
+    let mut conversation: Vec<serde_json::Value> = messages
         .iter()
-        .map(|m| {
-            serde_json::json!({
-                "role": m.role,
-                "content": content_to_api_value(&m.content)
-            })
-        })
+        .map(|m| serde_json::json!({ "role": m.role, "content": content_to_api_value(&m.content) }))
         .collect();
 
     logs.push(
@@ -164,94 +317,154 @@ pub async fn claude_send_message(
     );
 
     let client = Client::new();
-    let body = serde_json::json!({
-        "model": model,
-        "max_tokens": 8192,
-        "system": system,
-        "messages": api_messages,
-        "stream": true
-    });
+    const MAX_TOOL_ROUNDS: usize = 10;
 
-    let response = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", &api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| {
-            let msg = format!("Request failed: {}", e);
-            logs.push(LogLevel::Error, &msg, "claude");
-            msg
-        })?;
+    for round in 0..MAX_TOOL_ROUNDS {
+        let mut body = serde_json::json!({
+            "model": model,
+            "max_tokens": 8192,
+            "system": system,
+            "messages": conversation,
+            "stream": true
+        });
 
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let body_text = response.text().await.unwrap_or_default();
-        // Try to extract a readable message from the API error JSON.
-        let friendly = serde_json::from_str::<serde_json::Value>(&body_text)
-            .ok()
-            .and_then(|v| {
-                v.get("error")
-                    .and_then(|e| e.get("message"))
-                    .and_then(|m| m.as_str())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or(body_text);
-        let msg = format!("API error {}: {}", status, friendly);
-        logs.push(LogLevel::Error, &msg, "claude");
-        app.emit(&format!("claude-error-{}", stream_id), &msg).ok();
-        return Err(msg);
-    }
-
-    // ── SSE streaming ─────────────────────────────────────────────────────────
-    let mut byte_stream = response.bytes_stream();
-    let mut buffer = String::new();
-
-    'stream: while let Some(chunk) = byte_stream.next().await {
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-        // SSE events are separated by double newlines.
-        loop {
-            let Some(event_end) = buffer.find("\n\n") else {
-                break;
-            };
-            let event_text = buffer[..event_end].to_string();
-            buffer = buffer[event_end + 2..].to_string();
-
-            // Find the data: line within this event.
-            let Some(data) = event_text
-                .lines()
-                .find(|l| l.starts_with("data: "))
-                .map(|l| &l[6..])
-            else {
-                continue;
-            };
-
-            if data.trim() == "[DONE]" {
-                break 'stream;
-            }
-
-            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) else {
-                continue;
-            };
-
-            match parsed.get("type").and_then(|t| t.as_str()) {
-                Some("content_block_delta") => {
-                    if let Some(text) = parsed
-                        .get("delta")
-                        .and_then(|d| d.get("text"))
-                        .and_then(|t| t.as_str())
-                    {
-                        app.emit(&format!("claude-chunk-{}", stream_id), text).ok();
-                    }
-                }
-                Some("message_stop") => break 'stream,
-                _ => {}
-            }
+        if enable_tools {
+            body["tools"] = serde_json::json!([bash_tool_definition()]);
         }
+
+        let response = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                let msg = format!("Request failed: {}", e);
+                logs.push(LogLevel::Error, &msg, "claude");
+                msg
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body_text = response.text().await.unwrap_or_default();
+            let friendly = serde_json::from_str::<serde_json::Value>(&body_text)
+                .ok()
+                .and_then(|v| v.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()).map(|s| s.to_string()))
+                .unwrap_or(body_text);
+            let msg = format!("API error {}: {}", status, friendly);
+            logs.push(LogLevel::Error, &msg, "claude");
+            app.emit(&format!("claude-error-{}", stream_id), &msg).ok();
+            return Err(msg);
+        }
+
+        let result = drain_stream(response, &app, &stream_id, true).await?;
+
+        // Build the assistant turn for conversation history
+        let mut assistant_content: Vec<serde_json::Value> = Vec::new();
+        for text in &result.text_blocks {
+            assistant_content.push(serde_json::json!({ "type": "text", "text": text }));
+        }
+        for (id, name, input_json) in &result.tool_use_blocks {
+            let input: serde_json::Value = serde_json::from_str(input_json).unwrap_or(serde_json::json!({}));
+            assistant_content.push(serde_json::json!({
+                "type": "tool_use",
+                "id": id,
+                "name": name,
+                "input": input
+            }));
+        }
+        conversation.push(serde_json::json!({ "role": "assistant", "content": assistant_content }));
+
+        // If Claude wants to use tools, execute them
+        if result.stop_reason == "tool_use" && !result.tool_use_blocks.is_empty() {
+            let mut tool_results: Vec<serde_json::Value> = Vec::new();
+
+            for (call_id, tool_name, input_json) in &result.tool_use_blocks {
+                if tool_name != "bash" {
+                    tool_results.push(serde_json::json!({
+                        "type": "tool_result",
+                        "tool_use_id": call_id,
+                        "content": "Unknown tool"
+                    }));
+                    continue;
+                }
+
+                let input: serde_json::Value = serde_json::from_str(input_json).unwrap_or_default();
+                let command = input.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                // Emit tool-call event to frontend
+                app.emit(&format!("claude-tool-call-{}", stream_id), serde_json::json!({
+                    "call_id": call_id,
+                    "command": command,
+                    "round": round
+                })).ok();
+
+                // Execute the command
+                let exec_result = if let Some(path) = &project_path {
+                    execute_in_dir(path, &command)
+                } else {
+                    crate::models::CommandOutput {
+                        stdout: String::new(),
+                        stderr: "No project directory available".to_string(),
+                        exit_code: 1,
+                        duration_ms: 0,
+                        command: command.clone(),
+                    }
+                };
+
+                // Log to project log
+                if let Some(pid) = &project_id {
+                    let level = if exec_result.exit_code == 0 { "success" } else { "error" };
+                    let _ = write_project_log(
+                        pid,
+                        level,
+                        &format!("$ {}\n{}{}", command,
+                            if exec_result.stdout.trim().is_empty() { String::new() } else { exec_result.stdout.trim().to_string() + "\n" },
+                            if exec_result.stderr.trim().is_empty() { String::new() } else { exec_result.stderr.trim().to_string() }
+                        ),
+                        "claude-agent",
+                    );
+                }
+
+                logs.push(
+                    if exec_result.exit_code == 0 { LogLevel::Success } else { LogLevel::Error },
+                    format!("Agent ran: {} → exit {}", command, exec_result.exit_code),
+                    "claude-agent",
+                );
+
+                // Emit tool-result event to frontend
+                app.emit(&format!("claude-tool-result-{}", stream_id), serde_json::json!({
+                    "call_id": call_id,
+                    "stdout": exec_result.stdout,
+                    "stderr": exec_result.stderr,
+                    "exit_code": exec_result.exit_code,
+                    "duration_ms": exec_result.duration_ms
+                })).ok();
+
+                // Build tool result content
+                let output = format!(
+                    "exit_code: {}\nstdout:\n{}\nstderr:\n{}",
+                    exec_result.exit_code,
+                    exec_result.stdout.trim(),
+                    exec_result.stderr.trim()
+                );
+
+                tool_results.push(serde_json::json!({
+                    "type": "tool_result",
+                    "tool_use_id": call_id,
+                    "content": output
+                }));
+            }
+
+            // Add tool results as user turn and continue loop
+            conversation.push(serde_json::json!({ "role": "user", "content": tool_results }));
+            continue; // next round
+        }
+
+        // stop_reason == "end_turn" (or not tool_use) → done
+        break;
     }
 
     app.emit(&format!("claude-done-{}", stream_id), ()).ok();
@@ -261,8 +474,6 @@ pub async fn claude_send_message(
 
 // ── Screenshot capture ────────────────────────────────────────────────────────
 
-/// Take a full-screen screenshot (without window selection prompt) and return
-/// it as a base64-encoded PNG string ready for the Claude API.
 #[tauri::command]
 pub async fn take_screenshot() -> Result<String, String> {
     let path = format!(
@@ -279,14 +490,12 @@ pub async fn take_screenshot() -> Result<String, String> {
         return Err("Screenshot command failed".to_string());
     }
 
-    let bytes =
-        std::fs::read(&path).map_err(|e| format!("Could not read screenshot file: {}", e))?;
-    let _ = std::fs::remove_file(&path); // cleanup
+    let bytes = std::fs::read(&path).map_err(|e| format!("Could not read screenshot file: {}", e))?;
+    let _ = std::fs::remove_file(&path);
 
     Ok(general_purpose::STANDARD.encode(&bytes))
 }
 
-/// Read an image file from disk and return it as base64 + media_type.
 #[tauri::command]
 pub async fn read_image_as_base64(path: String) -> Result<serde_json::Value, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("Cannot read {}: {}", path, e))?;

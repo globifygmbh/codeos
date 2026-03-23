@@ -75,6 +75,11 @@ pub fn run() {
             commands::claude::claude_send_message,
             commands::claude::take_screenshot,
             commands::claude::read_image_as_base64,
+            // Project logs & agent tools
+            commands::project_logs::get_project_log,
+            commands::project_logs::clear_project_log,
+            commands::project_logs::append_project_log_entry,
+            commands::project_logs::run_command_in_project,
             // MySQL manager
             commands::mysql_mgr::save_mysql_config,
             commands::mysql_mgr::get_mysql_config,

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import type {
   AppConfig,
@@ -7,13 +8,14 @@ import type {
   ClaudeModel,
   GitStatus,
   LogEntry,
-  MysqlConfig,
   Project,
   ProjectInput,
-  QueryResult,
   ServiceStatus,
   SystemCheck,
   TodoItem,
+  ToolCall,
+  ToolCallEvent,
+  ToolResultEvent,
   View,
 } from "../types";
 
@@ -81,8 +83,10 @@ interface AppActions {
   setChatProject: (projectId: string | null) => void;
   addChatMessage: (msg: ChatMessage) => void;
   updateLastAssistantMessage: (text: string, done: boolean) => void;
+  upsertToolCall: (callId: string, data: Partial<ToolCall>) => void;
   clearChat: () => void;
   loadChatModels: () => Promise<void>;
+  sendLogsToAgent: (projectId: string, message: string) => Promise<void>;
 
   // Todos (operate directly on the store's project list)
   addTodo: (projectId: string, text: string) => Promise<void>;
@@ -319,6 +323,26 @@ export const useStore = create<Store>((set, get) => ({
     });
   },
 
+  upsertToolCall: (callId, data) => {
+    set((s) => {
+      const msgs = [...s.chatMessages];
+      // Find last assistant message
+      const idx = msgs.map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant")?.i;
+      if (idx === undefined) return {};
+      const msg = { ...msgs[idx] };
+      const calls = [...(msg.toolCalls ?? [])];
+      const existing = calls.findIndex((c) => c.call_id === callId);
+      if (existing >= 0) {
+        calls[existing] = { ...calls[existing], ...data };
+      } else {
+        calls.push({ call_id: callId, command: "", running: true, ...data });
+      }
+      msg.toolCalls = calls;
+      msgs[idx] = msg;
+      return { chatMessages: msgs };
+    });
+  },
+
   clearChat: () => set({ chatMessages: [], chatStreaming: false }),
 
   loadChatModels: async () => {
@@ -326,6 +350,63 @@ export const useStore = create<Store>((set, get) => ({
       const models = await invoke<ClaudeModel[]>("get_claude_models");
       set({ chatModels: models });
     } catch (_) {}
+  },
+
+  sendLogsToAgent: async (projectId, message) => {
+    const store = get();
+
+    // Navigate to chat with the project selected
+    store.setView("chat");
+    store.setChatProject(projectId);
+
+    // Build the user message
+    const uid = () => crypto.randomUUID();
+    const userMsg: ChatMessage = { id: uid(), role: "user", content: message };
+    store.addChatMessage(userMsg);
+
+    // Placeholder assistant message
+    const streamId = uid();
+    const assistantMsg: ChatMessage = { id: uid(), role: "assistant", content: "", streaming: true };
+    store.addChatMessage(assistantMsg);
+
+    const project = store.projects.find((p) => p.id === projectId);
+
+    // Listen for events
+    const unlistenChunk  = await listen<string>(`claude-chunk-${streamId}`,       (ev) => store.updateLastAssistantMessage(ev.payload, false));
+    const unlistenDone   = await listen(`claude-done-${streamId}`,                ()    => store.updateLastAssistantMessage("", true));
+    const unlistenError  = await listen<string>(`claude-error-${streamId}`,       (ev) => store.updateLastAssistantMessage(`\n\n⚠ ${ev.payload}`, true));
+    const unlistenTool   = await listen<ToolCallEvent>(`claude-tool-call-${streamId}`, (ev) => {
+      store.upsertToolCall(ev.payload.call_id, { command: ev.payload.command, running: true });
+    });
+    const unlistenResult = await listen<ToolResultEvent>(`claude-tool-result-${streamId}`, (ev) => {
+      store.upsertToolCall(ev.payload.call_id, {
+        stdout: ev.payload.stdout,
+        stderr: ev.payload.stderr,
+        exit_code: ev.payload.exit_code,
+        duration_ms: ev.payload.duration_ms,
+        running: false,
+      });
+    });
+
+    // Build conversation (just this one user message)
+    const apiMessages = useStore.getState().chatMessages
+      .slice(0, -1)
+      .map((m) => ({ role: m.role, content: m.content }));
+
+    try {
+      await invoke("claude_send_message", {
+        messages: apiMessages,
+        model: store.chatModel,
+        projectPath: project?.path ?? null,
+        projectId: project?.id ?? null,
+        projectName: project?.name ?? null,
+        streamId,
+      });
+    } catch (e) {
+      store.updateLastAssistantMessage(`\n\n⚠ ${String(e)}`, true);
+    } finally {
+      unlistenChunk(); unlistenDone(); unlistenError(); unlistenTool(); unlistenResult();
+    }
   },
 
   // ── Todos ────────────────────────────────────────────────────────────────────

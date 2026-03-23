@@ -242,3 +242,24 @@ pub struct QueryResult {
     pub row_count: usize,
     pub affected_rows: Option<u64>,
 }
+
+// ── Project log ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectLogEntry {
+    pub timestamp: String,
+    pub level: String,   // "info" | "warn" | "error" | "success" | "debug"
+    pub message: String,
+    pub source: String,
+}
+
+// ── Command output (agent tool use) ──────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+    pub duration_ms: u64,
+    pub command: String,
+}
