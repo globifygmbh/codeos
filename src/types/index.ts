@@ -29,6 +29,7 @@ export interface Project {
   updated_at: string;
   todos: TodoItem[];
   mysql_config: MysqlConfig | null;
+  credentials: CredentialEntry[];
 }
 
 export interface ProjectInput {
@@ -212,6 +213,35 @@ export interface QueryResult {
   affected_rows: number | null;
 }
 
+// ── Credentials ───────────────────────────────────────────────────────────────
+
+export interface CredentialField {
+  key: string;
+  value: string;
+  secret: boolean;
+}
+
+export type CredentialCategory = "login" | "database" | "api" | "env" | "note";
+
+export interface CredentialEntry {
+  id: string;
+  label: string;
+  category: CredentialCategory;
+  fields: CredentialField[];
+  created_at: string;
+}
+
+// ── File editor ───────────────────────────────────────────────────────────────
+
+export interface FileEntry {
+  name: string;
+  path: string;       // relative to project root
+  full_path: string;
+  is_dir: boolean;
+  extension: string | null;
+  size: number | null;
+}
+
 // ── UI ────────────────────────────────────────────────────────────────────────
 
-export type View = "dashboard" | "projects" | "chat" | "mysql" | "logs" | "settings";
+export type View = "dashboard" | "projects" | "chat" | "editor" | "mysql" | "logs" | "settings";

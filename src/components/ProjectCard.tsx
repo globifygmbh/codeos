@@ -6,6 +6,7 @@ import {
   FileText,
   FolderOpen,
   GitBranch,
+  Info,
   Loader,
   MoreHorizontal,
   Pencil,
@@ -16,6 +17,7 @@ import {
 import { useRef, useState } from "react";
 import { useStore } from "../stores/store";
 import type { GitStatus, Project } from "../types";
+import CredentialsPanel from "./CredentialsPanel";
 import GitPanel from "./GitPanel";
 import ProjectLogPanel from "./ProjectLogPanel";
 import TodoPanel from "./TodoPanel";
@@ -26,7 +28,7 @@ interface Props {
   onSelect: () => void;
 }
 
-type Tab = "git" | "todos" | "logs";
+type Tab = "git" | "todos" | "logs" | "info";
 
 export default function ProjectCard({ project, isSelected, onSelect }: Props) {
   const { removeProject, renameProject, duplicateProject, gitStatuses } = useStore();
@@ -223,7 +225,7 @@ export default function ProjectCard({ project, isSelected, onSelect }: Props) {
 
           {/* Tab bar */}
           <div className="flex border-t" style={{ borderColor: "var(--border-color)" }}>
-            {(["git", "todos", "logs"] as Tab[]).map((tab) => (
+            {(["git", "todos", "logs", "info"] as Tab[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -233,12 +235,16 @@ export default function ProjectCard({ project, isSelected, onSelect }: Props) {
                     : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
                 }`}
               >
-                {tab === "git"  && <GitBranch size={11} />}
+                {tab === "git"   && <GitBranch size={11} />}
                 {tab === "todos" && <CheckSquare size={11} />}
-                {tab === "logs" && <FileText size={11} />}
+                {tab === "logs"  && <FileText size={11} />}
+                {tab === "info"  && <Info size={11} />}
                 {tab}
                 {tab === "todos" && openTodos > 0 && (
                   <span className="rounded-full bg-accent-yellow/15 px-1 text-[9px] text-accent-yellow">{openTodos}</span>
+                )}
+                {tab === "info" && (project.credentials ?? []).length > 0 && (
+                  <span className="rounded-full bg-accent-purple/15 px-1 text-[9px] text-accent-purple">{(project.credentials ?? []).length}</span>
                 )}
               </button>
             ))}
@@ -249,6 +255,7 @@ export default function ProjectCard({ project, isSelected, onSelect }: Props) {
             {activeTab === "git"   && <GitPanel project={project} />}
             {activeTab === "todos" && <TodoPanel project={project} />}
             {activeTab === "logs"  && <ProjectLogPanel project={project} />}
+            {activeTab === "info"  && <CredentialsPanel project={project} />}
           </div>
         </div>
       )}

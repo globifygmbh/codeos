@@ -53,6 +53,27 @@ pub struct Project {
     pub todos: Vec<TodoItem>,
     #[serde(default)]
     pub mysql_config: Option<MysqlConfig>,
+    /// Free-form credential/info entries (login, DB, API keys, notes)
+    #[serde(default)]
+    pub credentials: Vec<CredentialEntry>,
+}
+
+// ── Credential entry (per project) ───────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialEntry {
+    pub id: String,
+    pub label: String,       // e.g. "Admin Login", "MySQL", "API Key"
+    pub category: String,    // "login" | "database" | "api" | "env" | "note"
+    pub fields: Vec<CredentialField>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialField {
+    pub key: String,   // e.g. "URL", "Benutzername", "Passwort"
+    pub value: String,
+    pub secret: bool,  // if true, value is hidden by default in UI
 }
 
 impl Project {
@@ -72,6 +93,7 @@ impl Project {
             updated_at: now,
             todos: Vec::new(),
             mysql_config: None,
+            credentials: Vec::new(),
         }
     }
 }
@@ -251,6 +273,18 @@ pub struct ProjectLogEntry {
     pub level: String,   // "info" | "warn" | "error" | "success" | "debug"
     pub message: String,
     pub source: String,
+}
+
+// ── File entry (for project file browser) ────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,        // relative to project root
+    pub full_path: String,   // absolute path on disk
+    pub is_dir: bool,
+    pub extension: Option<String>,
+    pub size: Option<u64>,
 }
 
 // ── Command output (agent tool use) ──────────────────────────────────────────

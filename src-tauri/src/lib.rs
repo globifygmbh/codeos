@@ -80,6 +80,16 @@ pub fn run() {
             commands::project_logs::clear_project_log,
             commands::project_logs::append_project_log_entry,
             commands::project_logs::run_command_in_project,
+            // Credentials
+            commands::credentials::get_credentials,
+            commands::credentials::upsert_credential,
+            commands::credentials::delete_credential,
+            // File editor
+            commands::file_editor::list_project_files,
+            commands::file_editor::read_project_file,
+            commands::file_editor::write_project_file,
+            commands::file_editor::create_project_entry,
+            commands::file_editor::delete_project_entry,
             // MySQL manager
             commands::mysql_mgr::save_mysql_config,
             commands::mysql_mgr::get_mysql_config,

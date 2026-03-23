@@ -1,4 +1,6 @@
 pub mod claude;
+pub mod credentials;
+pub mod file_editor;
 pub mod git;
 pub mod mysql_mgr;
 pub mod project_logs;

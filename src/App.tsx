@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import ChatWindow from "./components/ChatWindow";
 import Dashboard from "./components/Dashboard";
+import EditorView from "./components/EditorView";
 import LogViewer from "./components/LogViewer";
 import MysqlManager from "./components/MysqlManager";
 import ProjectList from "./components/ProjectList";
@@ -64,10 +65,11 @@ export default function App() {
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto">
+        <div className={`flex-1 ${activeView === "chat" || activeView === "editor" ? "overflow-hidden" : "overflow-y-auto"}`}>
           {activeView === "dashboard" && <Dashboard />}
           {activeView === "projects"  && <ProjectList />}
           {activeView === "chat"      && <ChatWindow />}
+          {activeView === "editor"    && <EditorView />}
           {activeView === "mysql"     && <MysqlManager />}
           {activeView === "logs"      && <LogViewer />}
           {activeView === "settings"  && <Settings />}

@@ -1,4 +1,5 @@
 import {
+  Code2,
   Database,
   FolderOpen,
   Gauge,
@@ -30,6 +31,7 @@ export default function Sidebar() {
     { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={17} /> },
     { id: "projects",  label: "Projects",  icon: <FolderOpen size={17} />, badge: projects.length || undefined },
     { id: "chat",      label: "Claude AI", icon: <MessageSquare size={17} /> },
+    { id: "editor",    label: "Editor",    icon: <Code2 size={17} /> },
     { id: "mysql",     label: "MySQL",     icon: <Database size={17} /> },
     { id: "logs",      label: "Logs",      icon: <ScrollText size={17} /> },
     { id: "settings",  label: "Settings",  icon: <Settings size={17} /> },
