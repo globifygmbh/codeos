@@ -5,16 +5,6 @@ use crate::config;
 use crate::log_store::LogStore;
 use crate::models::{AppConfig, LogLevel, SystemCheck, ToolCheck};
 
-fn run_version(cmd: &str, args: &[&str]) -> Option<String> {
-    Command::new(cmd).args(args).output().ok().and_then(|o| {
-        let s = if o.status.success() {
-            String::from_utf8_lossy(&o.stdout).trim().to_string()
-        } else {
-            String::from_utf8_lossy(&o.stderr).trim().to_string()
-        };
-        if s.is_empty() { None } else { Some(s) }
-    })
-}
 
 fn which(cmd: &str) -> Option<String> {
     Command::new("which").arg(cmd).output().ok().and_then(|o| {
@@ -24,6 +14,28 @@ fn which(cmd: &str) -> Option<String> {
         } else {
             None
         }
+    })
+}
+
+/// Like `which`, but also checks a list of absolute fallback paths.
+/// Needed because Tauri spawns processes with a minimal PATH that
+/// does not include /opt/homebrew/bin or /usr/local/bin.
+fn find_binary(cmd: &str, fallbacks: &[&str]) -> Option<String> {
+    which(cmd).or_else(|| {
+        fallbacks.iter()
+            .find(|p| std::path::Path::new(p).exists())
+            .map(|p| p.to_string())
+    })
+}
+
+fn run_version_at(path: &str, args: &[&str]) -> Option<String> {
+    Command::new(path).args(args).output().ok().and_then(|o| {
+        let s = if o.status.success() {
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        } else {
+            String::from_utf8_lossy(&o.stderr).trim().to_string()
+        };
+        if s.is_empty() { None } else { Some(s) }
     })
 }
 
@@ -46,48 +58,62 @@ fn detect_homebrew_prefix() -> Option<String> {
 pub async fn system_check(logs: State<'_, LogStore>) -> Result<SystemCheck, String> {
     logs.push(LogLevel::Info, "Running system check…", "system");
 
-    let homebrew_path   = which("brew");
     let homebrew_prefix = detect_homebrew_prefix();
-    let brew_installed  = homebrew_path.is_some();
     let prefix = homebrew_prefix.clone().unwrap_or_else(|| "/opt/homebrew".to_string());
 
+    // Use filesystem check first so detection works even when Homebrew's bin
+    // directory is not in the minimal PATH that Tauri inherits.
+    let brew_bin = find_binary("brew", &[
+        "/opt/homebrew/bin/brew",
+        "/usr/local/bin/brew",
+    ]);
+    let brew_installed = brew_bin.is_some();
     let homebrew = ToolCheck {
         installed: brew_installed,
-        version:   if brew_installed { run_version("brew", &["--version"]) } else { None },
-        path:      homebrew_path,
+        version:   brew_bin.as_deref().and_then(|p| run_version_at(p, &["--version"])),
+        path:      brew_bin,
     };
-    let git_path = which("git");
+
+    let git_bin = find_binary("git", &[
+        "/usr/bin/git",
+        "/opt/homebrew/bin/git",
+        "/usr/local/bin/git",
+    ]);
+    let git_installed = git_bin.is_some();
     let git = ToolCheck {
-        installed: git_path.is_some(),
-        version:   if git_path.is_some() { run_version("git", &["--version"]) } else { None },
-        path:      git_path,
+        installed: git_installed,
+        version:   git_bin.as_deref().and_then(|p| run_version_at(p, &["--version"])),
+        path:      git_bin,
     };
 
     let apache_bin = format!("{}/bin/httpd", prefix);
-    let apache_installed = std::path::Path::new(&apache_bin).exists() || which("httpd").is_some();
+    let apache_path = find_binary("httpd", &[apache_bin.as_str(), "/usr/sbin/httpd"]);
+    let apache_installed = apache_path.is_some();
     let apache = ToolCheck {
         installed: apache_installed,
-        version:   if apache_installed { run_version("httpd", &["-v"]).or_else(|| run_version(&apache_bin, &["-v"])) } else { None },
-        path:      if apache_installed { Some(apache_bin) } else { None },
+        version:   apache_path.as_deref().and_then(|p| run_version_at(p, &["-v"])),
+        path:      apache_path,
     };
 
     let mysql_bin = format!("{}/bin/mysql", prefix);
-    let mysql_installed = std::path::Path::new(&mysql_bin).exists() || which("mysql").is_some();
+    let mysql_path = find_binary("mysql", &[mysql_bin.as_str()]);
+    let mysql_installed = mysql_path.is_some();
     let mysql = ToolCheck {
         installed: mysql_installed,
-        version:   if mysql_installed { run_version("mysql", &["--version"]) } else { None },
-        path:      if mysql_installed { Some(mysql_bin) } else { None },
+        version:   mysql_path.as_deref().and_then(|p| run_version_at(p, &["--version"])),
+        path:      mysql_path,
     };
 
     let php_bin = format!("{}/bin/php", prefix);
-    let php_installed = std::path::Path::new(&php_bin).exists() || which("php").is_some();
+    let php_path = find_binary("php", &[php_bin.as_str(), "/usr/bin/php"]);
+    let php_installed = php_path.is_some();
     let php = ToolCheck {
         installed: php_installed,
-        version:   if php_installed {
-            run_version("php", &["--version"])
+        version:   php_path.as_deref().and_then(|p| {
+            run_version_at(p, &["--version"])
                 .map(|v| v.lines().next().unwrap_or("").to_string())
-        } else { None },
-        path: if php_installed { Some(php_bin) } else { None },
+        }),
+        path: php_path,
     };
 
     logs.push(LogLevel::Success, "System check complete", "system");
