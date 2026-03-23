@@ -57,7 +57,6 @@ function formatTs(ts: string) {
 }
 
 export default function ProjectLogPanel({ project }: Props) {
-  const { setView, setChatProject, addChatMessage, sendMessage: sendChatMessage } = useStore();
   const [entries, setEntries] = useState<ProjectLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<string>("all");

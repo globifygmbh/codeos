@@ -9,7 +9,6 @@ import {
   FolderPlus,
   Loader,
   Save,
-  Trash2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -62,8 +61,8 @@ function languageLabel(filename: string) {
   return map[ext] ?? ext.toUpperCase() || "Plain text";
 }
 
-function fileIcon(entry: FileEntry) {
-  if (entry.is_dir) return null;
+function fileIcon(entry: FileEntry): string {
+  if (entry.is_dir) return "";
   const ext = entry.extension ?? "";
   const color: Record<string, string> = {
     js: "text-yellow-400", jsx: "text-yellow-400",
@@ -361,26 +360,6 @@ export default function EditorView() {
     }
   }
 
-  async function handleDeleteEntry(entry: FileEntry) {
-    if (!project) return;
-    const what = entry.is_dir ? "Ordner" : "Datei";
-    if (!confirm(`${what} "${entry.name}" wirklich löschen?`)) return;
-    try {
-      await invoke("delete_project_entry", {
-        projectId: project.id,
-        relativePath: entry.path,
-      });
-      if (openedFile?.path === entry.path) {
-        setOpenedFile(null);
-        setFileContent("");
-        setEditedContent("");
-        setIsDirty(false);
-      }
-      await loadRoot(project);
-    } catch (e) {
-      setError(String(e));
-    }
-  }
 
   function handleEditorChange(value: string) {
     setEditedContent(value);

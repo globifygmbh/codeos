@@ -162,7 +162,6 @@ export default function MysqlManager() {
   const [showConfig, setShowConfig] = useState(false);
   const [mysqlCfg, setMysqlCfg] = useState<MysqlConfig | null>(null);
 
-  const selectedProject = projects.find((p) => p.id === mysqlProjectId) ?? null;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {

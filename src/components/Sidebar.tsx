@@ -20,11 +20,10 @@ interface NavItem {
 }
 
 export default function Sidebar() {
-  const { activeView, setView, services, projects, chatMessages } = useStore();
+  const { activeView, setView, services, projects } = useStore();
 
-  const runningCount   = services.filter((s) => s.state === "running").length;
-  const hasError       = services.some((s) => s.state === "error");
-  const unreadMessages = chatMessages.filter((m) => m.role === "assistant").length;
+  const runningCount = services.filter((s) => s.state === "running").length;
+  const hasError     = services.some((s) => s.state === "error");
 
   const indicatorColor = hasError ? "bg-accent-red" : runningCount > 0 ? "bg-accent-green" : "bg-gray-400";
 

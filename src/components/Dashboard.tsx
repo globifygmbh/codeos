@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowUpCircle, ExternalLink, GitBranch, RefreshCw } from "lucide-react";
+import { ExternalLink, GitBranch, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
 import { useStore } from "../stores/store";
 import ServiceStatusPanel from "./ServiceStatus";
@@ -51,13 +51,9 @@ export default function Dashboard() {
     services,
     projects,
     logs,
-    loadServices,
-    loadProjects,
-    loadLogs,
     refreshAll,
     servicesLoading,
     setView,
-    config,
   } = useStore();
 
   useEffect(() => {

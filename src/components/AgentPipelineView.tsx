@@ -186,7 +186,7 @@ export default function AgentPipelineView() {
 
     const unlistenChunk = await listen<string>(`pipeline-chunk-${streamId}`, (ev) => {
       setPhases(prev => {
-        const runningPhase = prev.findLast(p => p.status === "running");
+        const runningPhase = [...prev].reverse().find((p: PipelinePhase) => p.status === "running");
         if (!runningPhase) return prev;
         return prev.map(p =>
           p.id === runningPhase.id ? { ...p, chunks: [...p.chunks, ev.payload] } : p

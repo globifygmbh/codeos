@@ -7,12 +7,9 @@ import {
   FolderOpen,
   GitBranch,
   Info,
-  Loader,
   MoreHorizontal,
   Pencil,
   Trash2,
-  Upload,
-  X,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { useStore } from "../stores/store";
