@@ -105,15 +105,19 @@ fn brew_bin() -> String {
     "brew".to_string() // last resort
 }
 
-fn brew_services_list() -> Result<Vec<BrewServiceEntry>, String> {
-    let out = Command::new(brew_bin())
+fn brew_services_list(logs: &LogStore) -> Result<Vec<BrewServiceEntry>, String> {
+    let brew = brew_bin();
+    logs.push(LogLevel::Debug, format!("brew binary: {}", brew), "services");
+    let out = Command::new(&brew)
         .args(["services", "list"])
         .output()
-        .map_err(|e| format!("Failed to run `brew services list`: {}", e))?;
+        .map_err(|e| format!("Failed to run `{} services list`: {}", brew, e))?;
+    let raw = String::from_utf8_lossy(&out.stdout).to_string();
+    logs.push(LogLevel::Debug, format!("brew services list output:\n{}", raw.trim()), "services");
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
-    Ok(parse_brew_services_list(&String::from_utf8_lossy(&out.stdout)))
+    Ok(parse_brew_services_list(&raw))
 }
 
 fn brew_service_action(action: &str, service_name: &str) -> Result<String, String> {
@@ -149,7 +153,7 @@ pub async fn get_all_services_status(logs: State<'_, LogStore>) -> Result<Vec<Se
     let cfg = config::load_config().map_err(|e| e.to_string())?;
     let prefix = cfg.homebrew_prefix.clone().unwrap_or_else(|| "/opt/homebrew".to_string());
 
-    let entries = match brew_services_list() {
+    let entries = match brew_services_list(&logs) {
         Ok(e) => e,
         Err(err) => {
             logs.push(LogLevel::Error, format!("brew services list failed: {}", err), "services");
