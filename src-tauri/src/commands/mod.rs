@@ -1,5 +1,8 @@
+pub mod claude;
 pub mod git;
+pub mod mysql_mgr;
 pub mod projects;
 pub mod services;
 pub mod settings;
 pub mod system;
+pub mod todos;

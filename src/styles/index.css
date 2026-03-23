@@ -2,57 +2,103 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── CSS theme variables ─────────────────────────────────────────────────────
+   Light and dark values are toggled by the "dark" class on <html>.
+   All surface/text/border colours in components use these variables,
+   so a single class toggle adapts the entire UI.
+──────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Light mode */
+  --surface-0:    #f2f2f7;
+  --surface-1:    #ffffff;
+  --surface-2:    #f0f0f5;
+  --surface-3:    #e5e5ea;
+  --text-primary:   #1c1c1e;
+  --text-secondary: #636366;
+  --text-muted:     #aeaeb2;
+  --border-color:   rgba(0, 0, 0, 0.08);
+
+  color-scheme: light dark;
+}
+
+.dark {
+  /* Dark mode */
+  --surface-0:    #0f1117;
+  --surface-1:    #1a1d27;
+  --surface-2:    #21253a;
+  --surface-3:    #2a2f47;
+  --text-primary:   #f2f2f7;
+  --text-secondary: #8e8e93;
+  --text-muted:     #48484a;
+  --border-color:   rgba(255, 255, 255, 0.06);
+}
+
 /* ── macOS-style scrollbars ─────────────────────────────────────────────────── */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 9999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
-}
+::-webkit-scrollbar          { width: 6px; height: 6px; }
+::-webkit-scrollbar-track    { background: transparent; }
+::-webkit-scrollbar-thumb    { background: rgba(128,128,128,0.25); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
 
-/* ── Prevent text selection on UI chrome ─────────────────────────────────────── */
-.no-select {
-  -webkit-user-select: none;
-  user-select: none;
-}
+/* ── Prevent text selection on nav chrome ────────────────────────────────────── */
+.no-select { -webkit-user-select: none; user-select: none; }
 
-/* ── Draggable title bar region ──────────────────────────────────────────────── */
-[data-tauri-drag-region] {
-  -webkit-app-region: drag;
-}
-[data-tauri-drag-region] * {
-  -webkit-app-region: no-drag;
-}
+/* ── macOS title bar drag region ─────────────────────────────────────────────── */
+[data-tauri-drag-region]   { -webkit-app-region: drag; }
+[data-tauri-drag-region] * { -webkit-app-region: no-drag; }
 
-/* ── Status dot animations ───────────────────────────────────────────────────── */
-@keyframes pulse-green {
+/* ── Service status dot pulse ────────────────────────────────────────────────── */
+@keyframes pulse-dot {
   0%, 100% { opacity: 1; }
-  50%       { opacity: 0.4; }
+  50%       { opacity: 0.35; }
 }
-.dot-running {
-  animation: pulse-green 2.5s ease-in-out infinite;
-}
+.dot-running { animation: pulse-dot 2.5s ease-in-out infinite; }
 
-/* ── Smooth view transitions ─────────────────────────────────────────────────── */
-.view-enter {
-  animation: fadeIn 120ms ease-out;
-}
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
+/* ── Fade-in for view transitions ────────────────────────────────────────────── */
+.view-enter { animation: fadeSlideIn 120ms ease-out; }
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(5px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Monospace log output ────────────────────────────────────────────────────── */
+/* ── Monospace terminal/log text ─────────────────────────────────────────────── */
 .log-output {
   font-family: "SF Mono", "JetBrains Mono", "Fira Code", monospace;
-  font-size: 0.78rem;
-  line-height: 1.6;
+  font-size: 0.775rem;
+  line-height: 1.65;
 }
+
+/* ── Chat message prose ──────────────────────────────────────────────────────── */
+.chat-prose { line-height: 1.6; }
+.chat-prose pre {
+  background: var(--surface-2);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+.chat-prose code {
+  font-family: "SF Mono", "JetBrains Mono", "Fira Code", monospace;
+  font-size: 0.8em;
+}
+.chat-prose p { margin: 0.35rem 0; }
+.chat-prose ul, .chat-prose ol { margin: 0.4rem 0 0.4rem 1.2rem; }
+.chat-prose li { margin: 0.15rem 0; }
+.chat-prose h1, .chat-prose h2, .chat-prose h3 { font-weight: 600; margin: 0.6rem 0 0.25rem; }
+.chat-prose blockquote {
+  border-left: 3px solid var(--border-color);
+  padding-left: 0.75rem;
+  color: var(--text-secondary);
+  margin: 0.4rem 0;
+}
+
+/* ── Textarea autoresize helper ──────────────────────────────────────────────── */
+.auto-resize { resize: none; overflow-y: hidden; }
+
+/* ── Smooth switch for theme toggle ──────────────────────────────────────────── */
+*, *::before, *::after {
+  transition: background-color 150ms ease, border-color 150ms ease, color 50ms ease;
+}
+/* Skip transitions on interactive elements that need instant feedback */
+button, a { transition: none; }

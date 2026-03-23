@@ -1,5 +1,20 @@
 // ── Project ───────────────────────────────────────────────────────────────────
 
+export interface TodoItem {
+  id: string;
+  text: string;
+  completed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MysqlConfig {
+  host: string;
+  port: number;
+  user: string;
+  database: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -12,6 +27,8 @@ export interface Project {
   document_root: string | null;
   created_at: string;
   updated_at: string;
+  todos: TodoItem[];
+  mysql_config: MysqlConfig | null;
 }
 
 export interface ProjectInput {
@@ -54,6 +71,14 @@ export interface GitStatus {
   last_commit_date: string | null;
 }
 
+export interface GitLogEntry {
+  hash: string;
+  short: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
 // ── System Check ──────────────────────────────────────────────────────────────
 
 export interface ToolCheck {
@@ -85,6 +110,7 @@ export interface AppConfig {
   git_check_interval_minutes: number;
   log_level: string;
   vhost_management_enabled: boolean;
+  preferred_browser: string | null;
 }
 
 export interface AppConfigUpdate {
@@ -95,6 +121,7 @@ export interface AppConfigUpdate {
   git_check_interval_minutes?: number;
   log_level?: string;
   vhost_management_enabled?: boolean;
+  preferred_browser?: string | null;
 }
 
 // ── Logs ──────────────────────────────────────────────────────────────────────
@@ -109,6 +136,35 @@ export interface LogEntry {
   source: string;
 }
 
-// ── UI State ──────────────────────────────────────────────────────────────────
+// ── Chat ──────────────────────────────────────────────────────────────────────
 
-export type View = "dashboard" | "projects" | "settings" | "logs";
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+
+export interface ChatMessage {
+  id: string;          // frontend-only, for React keys
+  role: "user" | "assistant";
+  content: ContentBlock[] | string;
+  streaming?: boolean; // true while the assistant is still writing
+  error?: string;
+}
+
+export interface ClaudeModel {
+  id: string;
+  name: string;
+  description: string;
+}
+
+// ── MySQL query result ────────────────────────────────────────────────────────
+
+export interface QueryResult {
+  columns: string[];
+  rows: string[][];
+  row_count: number;
+  affected_rows: number | null;
+}
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+
+export type View = "dashboard" | "projects" | "chat" | "mysql" | "logs" | "settings";

@@ -1,28 +1,58 @@
-use chrono::{DateTime, Local};
+use chrono::Local;
 use serde::{Deserialize, Serialize};
 
-// ── Project ──────────────────────────────────────────────────────────────────
+// ── Todo ──────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoItem {
+    pub id: String,
+    pub text: String,
+    pub completed: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// ── MySQL connection config (per project) ────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MysqlConfig {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub database: String,
+    // Password stored in Keychain: account = "mysql-<project_id>"
+}
+
+impl Default for MysqlConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".into(),
+            port: 3306,
+            user: "root".into(),
+            database: String::new(),
+        }
+    }
+}
+
+// ── Project ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub id: String,
     pub name: String,
-    /// Absolute path to the project root on disk.
     pub path: String,
-    /// e.g. "http://localhost:8080/myproject" or a custom vhost URL.
     pub local_url: String,
-    /// Port used (default 8080 for Apache, custom for per-project servers).
     pub port: u16,
-    /// Remote Git URL, e.g. "https://github.com/user/repo.git"
     pub git_remote: Option<String>,
-    /// Preferred PHP version string, e.g. "8.3"
     pub php_version: Option<String>,
-    /// Whether a named VirtualHost has been generated for this project.
     pub vhost_enabled: bool,
-    /// Custom Apache document root override (defaults to `path`).
     pub document_root: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub todos: Vec<TodoItem>,
+    #[serde(default)]
+    pub mysql_config: Option<MysqlConfig>,
 }
 
 impl Project {
@@ -40,6 +70,8 @@ impl Project {
             document_root: None,
             created_at: now.clone(),
             updated_at: now,
+            todos: Vec::new(),
+            mysql_config: None,
         }
     }
 }
@@ -58,9 +90,7 @@ pub enum ServiceState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceStatus {
-    /// Human-readable display name.
     pub name: String,
-    /// Brew service identifier, e.g. "httpd", "mysql@8.4", "php".
     pub brew_name: String,
     pub state: ServiceState,
     pub version: Option<String>,
@@ -76,9 +106,7 @@ pub struct GitStatus {
     pub branch: String,
     pub local_commit: String,
     pub remote_commit: Option<String>,
-    /// Commits the local branch is ahead of remote.
     pub ahead: u32,
-    /// Commits the local branch is behind remote.
     pub behind: u32,
     pub has_conflicts: bool,
     pub untracked_files: Vec<String>,
@@ -88,7 +116,7 @@ pub struct GitStatus {
     pub last_commit_date: Option<String>,
 }
 
-// ── System check ─────────────────────────────────────────────────────────────
+// ── System check ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCheck {
@@ -104,7 +132,6 @@ pub struct SystemCheck {
     pub apache: ToolCheck,
     pub mysql: ToolCheck,
     pub php: ToolCheck,
-    /// Homebrew prefix, e.g. "/opt/homebrew" (Apple Silicon) or "/usr/local" (Intel).
     pub homebrew_prefix: Option<String>,
 }
 
@@ -148,22 +175,18 @@ pub struct AppConfig {
     pub version: String,
     pub setup_completed: bool,
     pub projects: Vec<Project>,
-    /// Detected Homebrew prefix.
     pub homebrew_prefix: Option<String>,
-    /// Brew service name for Apache httpd.
     pub apache_service_name: String,
-    /// Brew service name for MySQL (e.g. "mysql" or "mysql@8.4").
     pub mysql_service_name: String,
-    /// Brew service name for PHP-FPM (e.g. "php" or "php@8.3"), if managed.
     pub php_service_name: Option<String>,
-    /// Auto-check remote git for updates.
     pub auto_check_git_updates: bool,
-    /// Interval in minutes for background git remote checks.
     pub git_check_interval_minutes: u32,
-    /// Log verbosity: "debug" | "info" | "warn" | "error".
     pub log_level: String,
-    /// Whether Apache VHost management is enabled.
     pub vhost_management_enabled: bool,
+    /// Preferred browser for opening project URLs.
+    /// None = system default. e.g. "Google Chrome", "Firefox", "Safari"
+    #[serde(default)]
+    pub preferred_browser: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -180,11 +203,12 @@ impl Default for AppConfig {
             git_check_interval_minutes: 15,
             log_level: String::from("info"),
             vhost_management_enabled: false,
+            preferred_browser: None,
         }
     }
 }
 
-// ── Input DTOs (from frontend) ────────────────────────────────────────────────
+// ── Input DTOs ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct ProjectInput {
@@ -206,4 +230,15 @@ pub struct AppConfigUpdate {
     pub git_check_interval_minutes: Option<u32>,
     pub log_level: Option<String>,
     pub vhost_management_enabled: Option<bool>,
+    pub preferred_browser: Option<String>,
+}
+
+// ── MySQL query result ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub row_count: usize,
+    pub affected_rows: Option<u64>,
 }
