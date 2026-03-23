@@ -6,52 +6,82 @@ use crate::log_store::LogStore;
 use crate::models::{AppConfig, LogLevel, SystemCheck, ToolCheck};
 
 
-fn which(cmd: &str) -> Option<String> {
-    Command::new("which").arg(cmd).output().ok().and_then(|o| {
-        if o.status.success() {
-            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if s.is_empty() { None } else { Some(s) }
-        } else {
-            None
-        }
-    })
+/// Augmented PATH that includes all common Homebrew and system binary dirs.
+/// Tauri on macOS inherits a minimal PATH from launchd (~"/usr/bin:/bin:/sbin")
+/// that does not contain /opt/homebrew/bin, so we inject it explicitly for
+/// every child process we spawn.
+fn brew_path() -> String {
+    let base = std::env::var("PATH").unwrap_or_default();
+    format!("/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:{}", base)
 }
 
-/// Like `which`, but also checks a list of absolute fallback paths.
-/// Needed because Tauri spawns processes with a minimal PATH that
-/// does not include /opt/homebrew/bin or /usr/local/bin.
+/// Run `which <cmd>` with the augmented PATH.
+fn which(cmd: &str) -> Option<String> {
+    Command::new("which")
+        .arg(cmd)
+        .env("PATH", brew_path())
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if s.is_empty() { None } else { Some(s) }
+            } else {
+                None
+            }
+        })
+}
+
+/// Resolve a binary: try PATH-aware `which` first, then check absolute
+/// fallback paths on the filesystem.
 fn find_binary(cmd: &str, fallbacks: &[&str]) -> Option<String> {
     which(cmd).or_else(|| {
-        fallbacks.iter()
+        fallbacks
+            .iter()
+            .copied()
             .find(|p| std::path::Path::new(p).exists())
-            .map(|p| p.to_string())
+            .map(str::to_string)
     })
 }
 
 fn run_version_at(path: &str, args: &[&str]) -> Option<String> {
-    Command::new(path).args(args).output().ok().and_then(|o| {
-        let s = if o.status.success() {
-            String::from_utf8_lossy(&o.stdout).trim().to_string()
-        } else {
-            String::from_utf8_lossy(&o.stderr).trim().to_string()
-        };
-        if s.is_empty() { None } else { Some(s) }
-    })
+    Command::new(path)
+        .args(args)
+        .env("PATH", brew_path())
+        .output()
+        .ok()
+        .and_then(|o| {
+            let s = if o.status.success() {
+                String::from_utf8_lossy(&o.stdout).trim().to_string()
+            } else {
+                String::from_utf8_lossy(&o.stderr).trim().to_string()
+            };
+            if s.is_empty() { None } else { Some(s) }
+        })
 }
 
 fn detect_homebrew_prefix() -> Option<String> {
+    // Filesystem checks first — no PATH dependency.
     if std::path::Path::new("/opt/homebrew/bin/brew").exists() {
         return Some("/opt/homebrew".to_string());
     }
     if std::path::Path::new("/usr/local/bin/brew").exists() {
         return Some("/usr/local".to_string());
     }
-    Command::new("brew").arg("--prefix").output().ok().and_then(|o| {
-        if o.status.success() {
-            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if s.is_empty() { None } else { Some(s) }
-        } else { None }
-    })
+    // Fall back to running brew itself with augmented PATH.
+    Command::new("brew")
+        .arg("--prefix")
+        .env("PATH", brew_path())
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if s.is_empty() { None } else { Some(s) }
+            } else {
+                None
+            }
+        })
 }
 
 #[tauri::command]
