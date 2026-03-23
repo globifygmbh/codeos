@@ -248,7 +248,7 @@ pub async fn get_all_services_status(logs: State<'_, LogStore>) -> Result<Vec<Se
 pub async fn start_service(brew_name: String, logs: State<'_, LogStore>) -> Result<ServiceStatus, String> {
     logs.push(LogLevel::Info, format!("Starting service: {}", brew_name), "services");
     let cfg = config::load_config().map_err(|e| e.to_string())?;
-    let prefix = cfg.homebrew_prefix.unwrap_or_else(|| "/opt/homebrew".to_string());
+    let prefix = resolve_prefix(&cfg.homebrew_prefix);
 
     brew_service_action(&prefix, "start", &brew_name)
         .map_err(|e| {
@@ -265,7 +265,7 @@ pub async fn start_service(brew_name: String, logs: State<'_, LogStore>) -> Resu
 pub async fn stop_service(brew_name: String, logs: State<'_, LogStore>) -> Result<ServiceStatus, String> {
     logs.push(LogLevel::Info, format!("Stopping service: {}", brew_name), "services");
     let cfg = config::load_config().map_err(|e| e.to_string())?;
-    let prefix = cfg.homebrew_prefix.unwrap_or_else(|| "/opt/homebrew".to_string());
+    let prefix = resolve_prefix(&cfg.homebrew_prefix);
 
     brew_service_action(&prefix, "stop", &brew_name)
         .map_err(|e| {
@@ -282,7 +282,7 @@ pub async fn stop_service(brew_name: String, logs: State<'_, LogStore>) -> Resul
 pub async fn restart_service(brew_name: String, logs: State<'_, LogStore>) -> Result<ServiceStatus, String> {
     logs.push(LogLevel::Info, format!("Restarting service: {}", brew_name), "services");
     let cfg = config::load_config().map_err(|e| e.to_string())?;
-    let prefix = cfg.homebrew_prefix.unwrap_or_else(|| "/opt/homebrew".to_string());
+    let prefix = resolve_prefix(&cfg.homebrew_prefix);
 
     brew_service_action(&prefix, "restart", &brew_name)
         .map_err(|e| {
@@ -303,7 +303,7 @@ pub async fn get_service_status(brew_name: String) -> Result<ServiceStatus, Stri
 /// Helper: query status for one service.
 async fn single_service_status(brew_name: &str) -> Result<ServiceStatus, String> {
     let cfg = config::load_config().map_err(|e| e.to_string())?;
-    let prefix = cfg.homebrew_prefix.unwrap_or_else(|| "/opt/homebrew".to_string());
+    let prefix = resolve_prefix(&cfg.homebrew_prefix);
 
     let (state, real_name) = service_state(&prefix, brew_name);
 
@@ -332,7 +332,7 @@ async fn single_service_status(brew_name: &str) -> Result<ServiceStatus, String>
 #[tauri::command]
 pub async fn get_apache_error_log(lines: Option<u32>) -> Result<String, String> {
     let cfg = config::load_config().map_err(|e| e.to_string())?;
-    let prefix = cfg.homebrew_prefix.unwrap_or_else(|| "/opt/homebrew".to_string());
+    let prefix = resolve_prefix(&cfg.homebrew_prefix);
     let log_path = format!("{}/var/log/httpd/error_log", prefix);
     let n = lines.unwrap_or(100).to_string();
 
@@ -348,7 +348,7 @@ pub async fn get_apache_error_log(lines: Option<u32>) -> Result<String, String> 
 #[tauri::command]
 pub async fn get_mysql_error_log(lines: Option<u32>) -> Result<String, String> {
     let cfg = config::load_config().map_err(|e| e.to_string())?;
-    let prefix = cfg.homebrew_prefix.unwrap_or_else(|| "/opt/homebrew".to_string());
+    let prefix = resolve_prefix(&cfg.homebrew_prefix);
     let log_path = format!("{}/var/mysql/*.err", prefix);
     let n = lines.unwrap_or(100).to_string();
 
