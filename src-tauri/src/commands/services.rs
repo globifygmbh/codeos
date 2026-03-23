@@ -4,7 +4,6 @@ use tauri::State;
 use crate::config;
 use crate::log_store::LogStore;
 use crate::models::{LogLevel, ServiceState, ServiceStatus};
-use crate::utils::brew_path;
 
 // ── `brew services list` parser ───────────────────────────────────────────────
 
@@ -47,7 +46,7 @@ fn find_service<'a>(entries: &'a [BrewServiceEntry], preferred: &str) -> Option<
 
 fn apache_version(prefix: &str) -> Option<String> {
     let bin = format!("{}/bin/httpd", prefix);
-    let out = Command::new(&bin).arg("-v").env("PATH", brew_path()).output().ok()?;
+    let out = Command::new(&bin).arg("-v").output().ok()?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     // "Server version: Apache/2.4.62 (Homebrew)"
     stdout
@@ -57,14 +56,16 @@ fn apache_version(prefix: &str) -> Option<String> {
         .map(|s| s.split_whitespace().next().unwrap_or("").to_string())
 }
 
-fn mysql_version() -> Option<String> {
-    let out = Command::new("mysql").arg("--version").env("PATH", brew_path()).output().ok()?;
+fn mysql_version(prefix: &str) -> Option<String> {
+    let bin = format!("{}/bin/mysql", prefix);
+    let out = Command::new(&bin).arg("--version").output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout);
     Some(s.trim().to_string())
 }
 
-fn php_version() -> Option<String> {
-    let out = Command::new("php").arg("--version").env("PATH", brew_path()).output().ok()?;
+fn php_version(prefix: &str) -> Option<String> {
+    let bin = format!("{}/bin/php", prefix);
+    let out = Command::new(&bin).arg("--version").output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout);
     s.lines().next().map(|l| l.trim().to_string())
 }
@@ -87,10 +88,26 @@ fn apache_port(prefix: &str) -> Option<u16> {
 
 // ── Core service functions ────────────────────────────────────────────────────
 
+/// Resolve the absolute path to the `brew` binary.
+/// Uses the stored homebrew_prefix from config, or falls back to known locations.
+fn brew_bin() -> String {
+    if let Ok(cfg) = config::load_config() {
+        if let Some(prefix) = cfg.homebrew_prefix {
+            return format!("{}/bin/brew", prefix);
+        }
+    }
+    // Fallback: check known locations directly.
+    for candidate in &["/opt/homebrew/bin/brew", "/usr/local/bin/brew"] {
+        if std::path::Path::new(candidate).exists() {
+            return candidate.to_string();
+        }
+    }
+    "brew".to_string() // last resort
+}
+
 fn brew_services_list() -> Result<Vec<BrewServiceEntry>, String> {
-    let out = Command::new("brew")
+    let out = Command::new(brew_bin())
         .args(["services", "list"])
-        .env("PATH", brew_path())
         .output()
         .map_err(|e| format!("Failed to run `brew services list`: {}", e))?;
     if !out.status.success() {
@@ -100,9 +117,8 @@ fn brew_services_list() -> Result<Vec<BrewServiceEntry>, String> {
 }
 
 fn brew_service_action(action: &str, service_name: &str) -> Result<String, String> {
-    let out = Command::new("brew")
+    let out = Command::new(brew_bin())
         .args(["services", action, service_name])
-        .env("PATH", brew_path())
         .output()
         .map_err(|e| format!("brew services {} failed: {}", action, e))?;
 
@@ -182,7 +198,7 @@ pub async fn get_all_services_status(logs: State<'_, LogStore>) -> Result<Vec<Se
         state: mysql_entry
             .map(|e| state_from_str(&e.status))
             .unwrap_or(ServiceState::NotInstalled),
-        version: mysql_version(),
+        version: mysql_version(&prefix),
         pid: None,
         port: Some(3306),
         error: None,
@@ -201,7 +217,7 @@ pub async fn get_all_services_status(logs: State<'_, LogStore>) -> Result<Vec<Se
             state: php_entry
                 .map(|e| state_from_str(&e.status))
                 .unwrap_or(ServiceState::NotInstalled),
-            version: php_version(),
+            version: php_version(&prefix),
             pid: None,
             port: Some(9000),
             error: None,

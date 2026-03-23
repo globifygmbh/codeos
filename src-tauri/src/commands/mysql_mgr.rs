@@ -4,9 +4,43 @@ use tauri::State;
 use crate::config;
 use crate::log_store::LogStore;
 use crate::models::{LogLevel, MysqlConfig, QueryResult};
-use crate::utils::brew_path;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Returns the absolute path to the mysql binary, using the configured Homebrew prefix.
+fn mysql_bin() -> String {
+    let prefix = config::load_config()
+        .ok()
+        .and_then(|c| c.homebrew_prefix)
+        .unwrap_or_else(|| "/opt/homebrew".to_string());
+    let candidate = format!("{}/bin/mysql", prefix);
+    if std::path::Path::new(&candidate).exists() {
+        return candidate;
+    }
+    // Intel fallback
+    let intel = "/usr/local/bin/mysql";
+    if std::path::Path::new(intel).exists() {
+        return intel.to_string();
+    }
+    "mysql".to_string()
+}
+
+/// Returns the absolute path to the mysqldump binary.
+fn mysqldump_bin() -> String {
+    let prefix = config::load_config()
+        .ok()
+        .and_then(|c| c.homebrew_prefix)
+        .unwrap_or_else(|| "/opt/homebrew".to_string());
+    let candidate = format!("{}/bin/mysqldump", prefix);
+    if std::path::Path::new(&candidate).exists() {
+        return candidate;
+    }
+    let intel = "/usr/local/bin/mysqldump";
+    if std::path::Path::new(intel).exists() {
+        return intel.to_string();
+    }
+    "mysqldump".to_string()
+}
 
 /// Builds a Vec of `mysql` CLI arguments from a MysqlConfig + optional password.
 fn mysql_args<'a>(cfg: &'a MysqlConfig, password: Option<&'a str>) -> Vec<String> {
@@ -135,9 +169,8 @@ pub async fn mysql_run_query(
         "mysql",
     );
 
-    let output = Command::new("mysql")
+    let output = Command::new(mysql_bin())
         .args(&args)
-        .env("PATH", brew_path())
         .output()
         .map_err(|e| format!("mysql CLI not found or failed: {}", e))?;
 
@@ -216,9 +249,8 @@ pub async fn mysql_export_database(
         "mysql",
     );
 
-    let output = Command::new("mysqldump")
+    let output = Command::new(mysqldump_bin())
         .args(&args)
-        .env("PATH", brew_path())
         .output()
         .map_err(|e| format!("mysqldump not found or failed: {}", e))?;
 
