@@ -183,7 +183,6 @@ pub async fn disable_vhost(project_id: String, logs: State<'_, LogStore>) -> Res
     project.vhost_enabled = false;
     project.updated_at = now();
     let project_name = project.name.clone();
-    drop(project);
     config::save_config(&cfg).map_err(|e| e.to_string())?;
     logs.push(LogLevel::Info, format!("VHost disabled for '{}'", project_name), "projects");
     Ok(())

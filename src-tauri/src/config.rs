@@ -104,6 +104,7 @@ pub fn store_mysql_password(project_id: &str, password: &str) -> Result<()> {
 pub fn load_mysql_password(project_id: &str) -> Result<Option<String>> {
     keychain_get(&format!("mysql-{}", project_id))
 }
+#[allow(dead_code)]
 pub fn delete_mysql_password(project_id: &str) -> Result<()> {
     keychain_delete(&format!("mysql-{}", project_id))
 }

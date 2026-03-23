@@ -24,7 +24,7 @@ pub async fn get_todos(project_id: String) -> Result<Vec<TodoItem>, String> {
 pub async fn add_todo(
     project_id: String,
     text: String,
-    logs: State<'_, LogStore>,
+    _logs: State<'_, LogStore>,
 ) -> Result<TodoItem, String> {
     let mut cfg = config::load_config().map_err(|e| e.to_string())?;
     let project = cfg

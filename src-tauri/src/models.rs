@@ -252,6 +252,7 @@ pub struct AppConfigUpdate {
     pub git_check_interval_minutes: Option<u32>,
     pub log_level: Option<String>,
     pub vhost_management_enabled: Option<bool>,
+    #[allow(dead_code)]
     pub preferred_browser: Option<String>,
 }
 

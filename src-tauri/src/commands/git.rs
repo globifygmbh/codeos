@@ -108,7 +108,7 @@ pub async fn git_clone(url: String, destination: String, logs: State<'_, LogStor
 }
 
 #[tauri::command]
-pub async fn git_status(project_path: String, logs: State<'_, LogStore>) -> Result<GitStatus, String> {
+pub async fn git_status(project_path: String, _logs: State<'_, LogStore>) -> Result<GitStatus, String> {
     let dir = Path::new(&project_path);
     if !dir.exists() { return Err(format!("Path not found: {}", project_path)); }
 
