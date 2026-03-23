@@ -105,19 +105,17 @@ fn brew_bin() -> String {
     "brew".to_string() // last resort
 }
 
-fn brew_services_list(logs: &LogStore) -> Result<Vec<BrewServiceEntry>, String> {
+fn brew_services_list() -> Result<(Vec<BrewServiceEntry>, String, String), String> {
     let brew = brew_bin();
-    logs.push(LogLevel::Debug, format!("brew binary: {}", brew), "services");
     let out = Command::new(&brew)
         .args(["services", "list"])
         .output()
         .map_err(|e| format!("Failed to run `{} services list`: {}", brew, e))?;
     let raw = String::from_utf8_lossy(&out.stdout).to_string();
-    logs.push(LogLevel::Debug, format!("brew services list output:\n{}", raw.trim()), "services");
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
-    Ok(parse_brew_services_list(&raw))
+    Ok((parse_brew_services_list(&raw), brew, raw))
 }
 
 fn brew_service_action(action: &str, service_name: &str) -> Result<String, String> {
@@ -153,8 +151,12 @@ pub async fn get_all_services_status(logs: State<'_, LogStore>) -> Result<Vec<Se
     let cfg = config::load_config().map_err(|e| e.to_string())?;
     let prefix = cfg.homebrew_prefix.clone().unwrap_or_else(|| "/opt/homebrew".to_string());
 
-    let entries = match brew_services_list(&logs) {
-        Ok(e) => e,
+    let entries = match brew_services_list() {
+        Ok((entries, brew, raw)) => {
+            logs.push(LogLevel::Debug, format!("brew binary: {}", brew), "services");
+            logs.push(LogLevel::Debug, format!("brew services list:\n{}", raw.trim()), "services");
+            entries
+        }
         Err(err) => {
             logs.push(LogLevel::Error, format!("brew services list failed: {}", err), "services");
             // Return "not installed" statuses when brew is unavailable.
@@ -297,7 +299,7 @@ pub async fn get_service_status(brew_name: String) -> Result<ServiceStatus, Stri
 
 /// Helper: query status for one service.
 async fn single_service_status(brew_name: &str) -> Result<ServiceStatus, String> {
-    let entries = brew_services_list()?;
+    let entries = brew_services_list().map(|(e, _, _)| e)?;
     let entry = find_service(&entries, brew_name);
 
     // Guess display name from brew_name.
