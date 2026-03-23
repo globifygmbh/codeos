@@ -244,4 +244,25 @@ export interface FileEntry {
 
 // ── UI ────────────────────────────────────────────────────────────────────────
 
-export type View = "dashboard" | "projects" | "chat" | "editor" | "mysql" | "logs" | "settings";
+export type View = "dashboard" | "projects" | "chat" | "editor" | "mysql" | "logs" | "settings" | "pipeline";
+
+// ── Agent Pipeline ─────────────────────────────────────────────────────────────
+
+export type PipelineMode = "fast" | "standard" | "critical";
+
+export type PipelinePhaseStatus = "pending" | "running" | "done" | "pass" | "needs_changes" | "error" | "skipped" | "fixed";
+
+export interface PipelinePhase {
+  id: string;
+  name: string;
+  status: PipelinePhaseStatus;
+  text: string;       // accumulated output
+  chunks: string[];   // streaming chunks
+}
+
+export type AgentMode =
+  | "code" | "design" | "test"
+  | "planning" | "ux" | "accessibility" | "security"
+  | "data" | "api" | "performance" | "content"
+  | "devops" | "refactor" | "seo" | "conversion"
+  | "rbac" | "table_workflow" | "forms";

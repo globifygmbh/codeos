@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import AgentPipelineView from "./components/AgentPipelineView";
 import ChatWindow from "./components/ChatWindow";
 import Dashboard from "./components/Dashboard";
 import EditorView from "./components/EditorView";
@@ -36,11 +37,26 @@ export default function App() {
 
   if (!isInitialized) {
     return (
-      <div className="flex h-screen items-center justify-center bg-surface-0">
-        <div className="text-center">
-          <div className="mx-auto mb-4 h-9 w-9 animate-spin rounded-full border-2 border-accent-blue border-t-transparent" />
-          <p className="text-sm text-[var(--text-secondary)]">Loading CodeOS…</p>
+      <div className="flex h-screen flex-col items-center justify-center"
+        style={{ background: "#000", fontFamily: "-apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif" }}>
+        {/* Icon */}
+        <div className="mb-8 flex h-24 w-24 items-center justify-center rounded-[28px]"
+          style={{ background: "linear-gradient(145deg,#1a0030,#0d0020)", boxShadow: "0 0 0 1px rgba(147,51,234,0.3), 0 20px 60px rgba(147,51,234,0.2)" }}>
+          <span style={{ fontSize: 52, fontWeight: 700, color: "#9333ea", lineHeight: 1, letterSpacing: "-2px" }}>C</span>
         </div>
+
+        {/* Name */}
+        <h1 style={{ fontSize: 28, fontWeight: 600, color: "#fff", letterSpacing: "-0.5px", margin: "0 0 4px" }}>
+          CodeOS
+        </h1>
+        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", margin: "0 0 40px", letterSpacing: "0.02em" }}>
+          by nyza-studio
+        </p>
+
+        {/* Spinner */}
+        <div style={{ width: 20, height: 20, borderRadius: "50%", border: "2px solid rgba(147,51,234,0.2)", borderTopColor: "#9333ea", animation: "spin 0.7s linear infinite" }} />
+
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -65,10 +81,11 @@ export default function App() {
           </div>
         )}
 
-        <div className={`flex-1 ${activeView === "chat" || activeView === "editor" ? "overflow-hidden" : "overflow-y-auto"}`}>
+        <div className={`flex-1 ${activeView === "chat" || activeView === "editor" || activeView === "pipeline" ? "overflow-hidden" : "overflow-y-auto"}`}>
           {activeView === "dashboard" && <Dashboard />}
           {activeView === "projects"  && <ProjectList />}
           {activeView === "chat"      && <ChatWindow />}
+          {activeView === "pipeline"  && <AgentPipelineView />}
           {activeView === "editor"    && <EditorView />}
           {activeView === "mysql"     && <MysqlManager />}
           {activeView === "logs"      && <LogViewer />}

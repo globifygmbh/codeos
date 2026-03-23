@@ -3,6 +3,7 @@ import {
   Database,
   FolderOpen,
   Gauge,
+  GitFork,
   LayoutDashboard,
   MessageSquare,
   ScrollText,
@@ -31,6 +32,7 @@ export default function Sidebar() {
     { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={17} /> },
     { id: "projects",  label: "Projects",  icon: <FolderOpen size={17} />, badge: projects.length || undefined },
     { id: "chat",      label: "Claude AI", icon: <MessageSquare size={17} /> },
+    { id: "pipeline",  label: "Pipeline",  icon: <GitFork size={17} /> },
     { id: "editor",    label: "Editor",    icon: <Code2 size={17} /> },
     { id: "mysql",     label: "MySQL",     icon: <Database size={17} /> },
     { id: "logs",      label: "Logs",      icon: <ScrollText size={17} /> },
@@ -51,7 +53,7 @@ export default function Sidebar() {
           </div>
           <div>
             <p className="text-sm font-semibold leading-tight text-[var(--text-primary)]">CodeOS</p>
-            <p className="text-[10px] text-[var(--text-muted)]">Dev Manager</p>
+            <p className="text-[10px] text-[var(--text-muted)]">by nyza-studio</p>
           </div>
         </div>
       </div>
@@ -96,7 +98,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="no-select px-4 pb-4 pt-2">
-        <p className="text-[10px] text-[var(--text-muted)]">v0.2.0</p>
+        <p className="text-[10px] text-[var(--text-muted)]">v0.2.0 · nyza-studio</p>
       </div>
     </aside>
   );

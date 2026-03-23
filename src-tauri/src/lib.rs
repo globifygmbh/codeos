@@ -68,6 +68,7 @@ pub fn run() {
             commands::todos::delete_todo,
             commands::todos::reorder_todos,
             // Claude AI
+            commands::claude::run_agent_pipeline,
             commands::claude::save_claude_api_key,
             commands::claude::get_claude_api_key_status,
             commands::claude::delete_claude_api_key_cmd,

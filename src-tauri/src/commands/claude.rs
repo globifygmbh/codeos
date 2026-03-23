@@ -281,11 +281,11 @@ struct StreamResult {
     stop_reason: String,
 }
 
+/// chunk_event: if Some("event-name"), emits text deltas to that event; if None, silently accumulates.
 async fn drain_stream(
     response: reqwest::Response,
     app: &AppHandle,
-    stream_id: &str,
-    emit_chunks: bool,
+    chunk_event: Option<&str>,
 ) -> Result<StreamResult, String> {
     let mut byte_stream = response.bytes_stream();
     let mut buffer = String::new();
@@ -344,8 +344,8 @@ async fn drain_stream(
                     match delta_type {
                         Some("text_delta") => {
                             let text = delta.and_then(|d| d.get("text")).and_then(|t| t.as_str()).unwrap_or("");
-                            if emit_chunks {
-                                app.emit(&format!("claude-chunk-{}", stream_id), text).ok();
+                            if let Some(event) = chunk_event {
+                                app.emit(event, text).ok();
                             }
                             if let Some(b) = blocks.iter_mut().find(|b| matches!(b, StreamBlock::Text { index: i, .. } if *i == index)) {
                                 if let StreamBlock::Text { text: t, .. } = b {
@@ -484,7 +484,7 @@ pub async fn claude_send_message(
             return Err(msg);
         }
 
-        let result = drain_stream(response, &app, &stream_id, true).await?;
+        let result = drain_stream(response, &app, Some(&format!("claude-chunk-{}", stream_id))).await?;
 
         // Build the assistant turn for conversation history
         let mut assistant_content: Vec<serde_json::Value> = Vec::new();
@@ -650,6 +650,551 @@ pub async fn claude_send_message(
 
     app.emit(&format!("claude-done-{}", stream_id), ()).ok();
     logs.push(LogLevel::Success, "Claude response complete", "claude");
+    Ok(())
+}
+
+// ── Specialist agent system prompts ──────────────────────────────────────────
+
+fn build_planning_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a senior software architect embedded in CodeOS. Before any code is written, \
+         break the given task into a clear, actionable implementation plan.\n\n\
+         Output EXACTLY this structure:\n\
+         ## Task Classification\n- Type: [feature|bugfix|refactor|review]\n\
+         - Domain: [website|admin_panel|api|backend|general]\n\
+         - Risk Level: [low|medium|high|critical]\n\n\
+         ## Architecture Plan\n[Step-by-step implementation — use real file paths]\n\n\
+         ## Files to Create or Modify\n[Concrete list: path + brief description of change]\n\n\
+         ## Technical Decisions\n[State management, caching, auth, DB design, folder structure]\n\n\
+         ## Recommended Reviewers\n[List from: test,security,ux,accessibility,performance,data,\
+         api,devops,seo,conversion,rbac,table_workflow,forms — with reason]\n\n\
+         ## Potential Risks\n[Technical debt, edge cases, scaling concerns]\n\n\
+         Be specific. Use concrete file paths. Avoid generic advice. \
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name {
+        s.push_str(&format!("\n\n## Project: {n}"));
+    }
+    s
+}
+
+fn build_ux_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a senior UX and product specialist embedded in CodeOS. Review digital products \
+         through the lens of real user workflows, not aesthetics.\n\
+         Focus on: user flows and unnecessary steps, jobs-to-be-done thinking, empty states and \
+         error messages, table/filter/bulk action patterns, onboarding experience, modal flows.\n\
+         For each issue: describe the user impact and suggest a concrete fix.\n\
+         Rate issues: Critical (blocks user goal) | Major (frustrates users) | Minor (small friction).\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_accessibility_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are an accessibility expert specializing in WCAG 2.1 AA compliance embedded in CodeOS.\n\
+         Review for: semantic HTML structure, keyboard navigation and focus management, ARIA roles \
+         (only where native HTML is insufficient), color contrast (4.5:1 normal text), screen reader \
+         compatibility, form labels and error states, modal/dialog/table/tab patterns.\n\
+         Cite specific WCAG success criteria (e.g. 1.3.1, 2.1.1). Prioritize issues that block \
+         users with disabilities from completing core tasks.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_security_agent_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a strict application security expert embedded in CodeOS. Be strict — flag even \
+         potential vulnerabilities. Review for: auth and session management flaws, RBAC and \
+         authorization bypasses, XSS/CSRF/SQLi/SSRF vectors, insecure secrets handling, file upload \
+         vulnerabilities, missing security headers (CSP, HSTS, X-Frame-Options), multi-tenant data \
+         leaks, audit logging gaps.\n\
+         Rate findings: Critical (exploitable immediately) | High (likely exploitable) | \
+         Medium (specific conditions) | Low (defense-in-depth).\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_data_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a database and data modeling expert embedded in CodeOS. Review and advise on: \
+         schema design and normalization, migration strategies, index selection and query performance, \
+         soft vs hard delete patterns, audit trail design, roles/permissions data models, N+1 query \
+         risks, and analytics/reporting structures.\n\
+         Provide specific SQL or ORM changes where relevant. Consider current correctness and \
+         long-term scalability.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_api_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are an API design and integration specialist embedded in CodeOS. Review and design: \
+         REST/GraphQL contracts, request/response shapes and type safety, consistent error codes, \
+         pagination/filtering/sorting patterns, idempotency for mutations, webhook design, \
+         retry/timeout/backoff strategies, and third-party integration reliability.\n\
+         Output concrete API spec snippets where relevant. Flag breaking changes.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_performance_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a web performance engineer embedded in CodeOS. Analyze: JS bundle size and code \
+         splitting, rendering bottlenecks (unnecessary re-renders, layout thrashing), caching \
+         strategies (HTTP/client/CDN), image and asset optimization, lazy loading, DB query N+1 \
+         and missing indexes, Core Web Vitals impact (TTFB, LCP, INP, CLS).\n\
+         For admin panels: table virtualization, filter performance, export job queuing.\n\
+         Be specific with thresholds and measurements.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_content_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a UX copywriter and content strategist embedded in CodeOS. Review and improve: \
+         button and CTA labels (describe the action, not the mechanism), error messages (explain \
+         what happened and what to do), empty state messages (guide toward next action), \
+         confirmation dialog text, onboarding instructions, table header and filter label clarity.\n\
+         Apply: be direct, concrete, consistent. Avoid jargon. Suggest replacement text inline.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_devops_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a DevOps and infrastructure engineer embedded in CodeOS. Review and advise on: \
+         CI/CD pipeline design, environment variable management and secrets handling, \
+         Docker/containerization, database migration strategies during deployment, rollback \
+         procedures, monitoring/alerting/logging setup, backup and restore, preview deployments, \
+         and zero-downtime deployment patterns. Be specific about tooling choices.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_refactor_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a clean code and refactoring specialist embedded in CodeOS. Identify and fix: \
+         duplicated logic, oversized components that should be split, dead code and unused imports, \
+         inconsistent naming conventions, premature abstractions, missing abstractions, circular \
+         dependencies, and architectural drift.\n\
+         Make only targeted, minimal changes. Explain the reasoning for each refactoring.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_seo_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are an SEO and web visibility specialist embedded in CodeOS. Review: meta tags \
+         (title/description/OG/Twitter Card), structured data (Schema.org), heading hierarchy \
+         (H1–H6), internal linking structure, URL design, canonical tags, robots.txt/sitemap, \
+         crawlability, Core Web Vitals impact on ranking, JS rendering considerations.\n\
+         Provide actionable recommendations with expected SEO impact.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_conversion_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a conversion rate optimization (CRO) specialist embedded in CodeOS. Analyze: \
+         hero section clarity and value proposition, primary CTA placement and copy, trust signals \
+         (testimonials, logos, security badges), pricing page design and plan differentiation, \
+         form friction and length, funnel drop-off points, mobile conversion experience.\n\
+         Suggest specific A/B test hypotheses with expected impact.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_rbac_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a permissions and access control specialist embedded in CodeOS. Review: role \
+         definitions and permission granularity, field-level permissions, route-level authorization \
+         checks, bulk action authorization, impersonation and delegation flows, permission \
+         inheritance and conflicts, audit trail completeness, multi-tenant isolation, and what \
+         users see vs what they can do. Apply the principle of least privilege.\n\
+         Flag any authorization bypass risks as Critical.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_table_workflow_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a data table and workflow UI specialist embedded in CodeOS. Review and design: \
+         table column selection and default ordering, filtering/search UX, multi-sort behavior, \
+         saved views/presets, pagination vs infinite scroll, bulk selection and bulk actions, \
+         row-level status management and transitions, detail panel/drawer patterns, inline editing, \
+         CSV/Excel export. Focus on performance with large datasets and multi-step workflows.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn build_forms_system_prompt(project_name: Option<&str>) -> String {
+    let mut s = String::from(
+        "You are a forms and data entry specialist embedded in CodeOS. Review: form structure and \
+         logical field grouping, real-time vs on-submit validation, field-level error messages, \
+         autosave behavior and dirty state indicators, dependent field logic, multi-step form \
+         navigation, undo/redo and confirm-before-leave patterns, loading/success/error state \
+         handling, form layout across screen sizes.\n\
+         End your review with exactly one of: `## Ergebnis: PASS` or `## Ergebnis: NEEDS_CHANGES`\n\
+         Respond in the same language as the user.",
+    );
+    if let Some(n) = project_name { s.push_str(&format!("\n\n## Project: {n}")); }
+    s
+}
+
+fn reviewer_system_prompt(reviewer_id: &str, project_name: Option<&str>) -> String {
+    match reviewer_id {
+        "ux"             => build_ux_system_prompt(project_name),
+        "accessibility"  => build_accessibility_system_prompt(project_name),
+        "security"       => build_security_agent_system_prompt(project_name),
+        "data"           => build_data_system_prompt(project_name),
+        "api"            => build_api_system_prompt(project_name),
+        "performance"    => build_performance_system_prompt(project_name),
+        "content"        => build_content_system_prompt(project_name),
+        "devops"         => build_devops_system_prompt(project_name),
+        "refactor"       => build_refactor_system_prompt(project_name),
+        "seo"            => build_seo_system_prompt(project_name),
+        "conversion"     => build_conversion_system_prompt(project_name),
+        "rbac"           => build_rbac_system_prompt(project_name),
+        "table_workflow" => build_table_workflow_system_prompt(project_name),
+        "forms"          => build_forms_system_prompt(project_name),
+        _                => build_test_system_prompt(project_name), // default: test
+    }
+}
+
+fn reviewer_display_name(id: &str) -> &'static str {
+    match id {
+        "test"           => "Test Agent",
+        "ux"             => "UX/Product Agent",
+        "accessibility"  => "Accessibility Agent",
+        "security"       => "Security Agent",
+        "data"           => "Data/DB Agent",
+        "api"            => "API Agent",
+        "performance"    => "Performance Agent",
+        "content"        => "Content Agent",
+        "devops"         => "DevOps Agent",
+        "refactor"       => "Refactor Agent",
+        "seo"            => "SEO Agent",
+        "conversion"     => "Conversion Agent",
+        "rbac"           => "RBAC Agent",
+        "table_workflow" => "Table/Workflow Agent",
+        "forms"          => "Forms Agent",
+        _                => "Reviewer",
+    }
+}
+
+// ── Pipeline helpers ──────────────────────────────────────────────────────────
+
+fn emit_pipeline_phase(app: &AppHandle, sid: &str, id: &str, name: &str, status: &str, text: &str) {
+    app.emit(&format!("pipeline-phase-{sid}"), serde_json::json!({
+        "id": id, "name": name, "status": status, "text": text
+    })).ok();
+}
+
+async fn call_claude_simple(
+    client: &reqwest::Client,
+    api_key: &str,
+    model: &str,
+    system: &str,
+    user_message: &str,
+    app: &AppHandle,
+    chunk_event: Option<String>,
+) -> Result<String, String> {
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": 8192,
+        "system": system,
+        "messages": [{ "role": "user", "content": user_message }],
+        "stream": true
+    });
+
+    let resp = client
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&body)
+        .send().await.map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let t = resp.text().await.unwrap_or_default();
+        return Err(format!("API error: {}", t));
+    }
+
+    let result = drain_stream(resp, app, chunk_event.as_deref()).await?;
+    Ok(result.text_blocks.join(""))
+}
+
+// ── Agent Pipeline command ────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn run_agent_pipeline(
+    app: AppHandle,
+    task: String,
+    project_path: Option<String>,
+    project_id: Option<String>,
+    project_name: Option<String>,
+    model: String,
+    pipeline_mode: String,   // "fast" | "standard" | "critical"
+    reviewers: Vec<String>,  // used in "standard" mode
+    stream_id: String,
+    logs: State<'_, LogStore>,
+) -> Result<(), String> {
+    let api_key = config::load_claude_api_key()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Claude API key not configured.".to_string())?;
+
+    let model = match model.as_str() {
+        "claude-sonnet-4-6" | "claude-opus-4-6" | "claude-haiku-4-5-20251001" => model,
+        _ => "claude-sonnet-4-6".to_string(),
+    };
+
+    let selected_reviewers: Vec<String> = match pipeline_mode.as_str() {
+        "fast"     => vec!["test".into()],
+        "critical" => vec![
+            "test".into(), "security".into(), "ux".into(),
+            "accessibility".into(), "performance".into(),
+            "data".into(), "api".into(), "rbac".into(),
+        ],
+        _ => reviewers, // standard: use what was passed
+    };
+
+    let client = reqwest::Client::new();
+    logs.push(LogLevel::Info,
+        format!("Pipeline start — mode: {}, task: {:.60}", pipeline_mode, task),
+        "pipeline");
+
+    // ── Phase 1: Planner ──────────────────────────────────────────
+    emit_pipeline_phase(&app, &stream_id, "planner", "Planer & Architekt", "running", "");
+    let planner_system = build_planning_system_prompt(project_name.as_deref());
+    let plan_text = call_claude_simple(
+        &client, &api_key, &model, &planner_system, &task,
+        &app, Some(format!("pipeline-chunk-{}", stream_id)),
+    ).await.unwrap_or_else(|e| format!("[Planner error: {}]", e));
+    emit_pipeline_phase(&app, &stream_id, "planner", "Planer & Architekt", "done", &plan_text);
+
+    // ── Phase 2: Code Agent (with tool use) ───────────────────────
+    emit_pipeline_phase(&app, &stream_id, "code", "Code Agent", "running", "");
+
+    let enable_tools = project_path.is_some();
+    let code_system = build_system_prompt(project_path.as_deref(), project_name.as_deref(), enable_tools);
+    let code_prompt = format!(
+        "## Architecture Plan\n{plan_text}\n\n## Task\n{task}\n\nBitte setze den Plan um.",
+    );
+
+    let mut conversation: Vec<serde_json::Value> = vec![
+        serde_json::json!({ "role": "user", "content": code_prompt })
+    ];
+
+    let mut code_output = String::new();
+    const MAX_ROUNDS: usize = 10;
+
+    for round in 0..MAX_ROUNDS {
+        let mut body = serde_json::json!({
+            "model": model,
+            "max_tokens": 8192,
+            "system": code_system,
+            "messages": conversation,
+            "stream": true
+        });
+        if enable_tools {
+            body["tools"] = serde_json::json!([
+                bash_tool_definition(),
+                save_credential_tool_definition(),
+            ]);
+        }
+
+        let resp = client.post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body).send().await.map_err(|e| e.to_string())?;
+
+        if !resp.status().is_success() {
+            let t = resp.text().await.unwrap_or_default();
+            emit_pipeline_phase(&app, &stream_id, "code", "Code Agent", "error", &t);
+            break;
+        }
+
+        let chunk_ev = format!("pipeline-chunk-{}", stream_id);
+        let result = drain_stream(resp, &app, Some(&chunk_ev)).await?;
+
+        for text in &result.text_blocks { code_output.push_str(text); }
+
+        let mut assistant_content: Vec<serde_json::Value> = Vec::new();
+        for text in &result.text_blocks {
+            assistant_content.push(serde_json::json!({ "type": "text", "text": text }));
+        }
+        for (id, name, input_json) in &result.tool_use_blocks {
+            let input: serde_json::Value = serde_json::from_str(input_json).unwrap_or_default();
+            assistant_content.push(serde_json::json!({ "type": "tool_use", "id": id, "name": name, "input": input }));
+        }
+        conversation.push(serde_json::json!({ "role": "assistant", "content": assistant_content }));
+
+        if result.stop_reason == "tool_use" && !result.tool_use_blocks.is_empty() {
+            let mut tool_results: Vec<serde_json::Value> = Vec::new();
+            for (call_id, tool_name, input_json) in &result.tool_use_blocks {
+                let input: serde_json::Value = serde_json::from_str(input_json).unwrap_or_default();
+                match tool_name.as_str() {
+                    "bash" => {
+                        let command = input.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        app.emit(&format!("pipeline-tool-call-{}", stream_id), serde_json::json!({
+                            "call_id": call_id, "command": command, "round": round, "phase": "code"
+                        })).ok();
+                        let exec_result = if let Some(p) = &project_path {
+                            execute_in_dir(p, &command)
+                        } else {
+                            crate::models::CommandOutput {
+                                stdout: String::new(), stderr: "No project dir".into(),
+                                exit_code: 1, duration_ms: 0, command: command.clone(),
+                            }
+                        };
+                        if let Some(pid) = &project_id {
+                            let _ = write_project_log(pid, if exec_result.exit_code == 0 { "success" } else { "error" },
+                                &format!("$ {}\n{}", command, exec_result.stdout.trim()), "pipeline");
+                        }
+                        app.emit(&format!("pipeline-tool-result-{}", stream_id), serde_json::json!({
+                            "call_id": call_id, "stdout": exec_result.stdout,
+                            "stderr": exec_result.stderr, "exit_code": exec_result.exit_code,
+                            "duration_ms": exec_result.duration_ms, "phase": "code"
+                        })).ok();
+                        tool_results.push(serde_json::json!({
+                            "type": "tool_result", "tool_use_id": call_id,
+                            "content": format!("exit: {}\n{}\n{}", exec_result.exit_code,
+                                exec_result.stdout.trim(), exec_result.stderr.trim())
+                        }));
+                    }
+                    "save_credential" => {
+                        let label = input.get("label").and_then(|v| v.as_str()).unwrap_or("Unbekannt").to_string();
+                        let category = input.get("category").and_then(|v| v.as_str()).unwrap_or("note").to_string();
+                        let fields: Vec<crate::models::CredentialField> = input.get("fields")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|f| {
+                                Some(crate::models::CredentialField {
+                                    key: f.get("key").and_then(|v| v.as_str())?.to_string(),
+                                    value: f.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                    secret: f.get("secret").and_then(|v| v.as_bool()).unwrap_or(false),
+                                })
+                            }).collect())
+                            .unwrap_or_default();
+                        let entry = CredentialEntry {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            label: label.clone(), category, fields,
+                            created_at: chrono::Local::now().to_rfc3339(),
+                        };
+                        let msg = if let Some(pid) = &project_id {
+                            match upsert_credential(pid.clone(), entry, logs.clone()).await {
+                                Ok(_) => { app.emit("credential-saved", serde_json::json!({ "project_id": pid })).ok(); format!("Saved: {label}") }
+                                Err(e) => format!("Error: {e}"),
+                            }
+                        } else { "No project selected".to_string() };
+                        tool_results.push(serde_json::json!({ "type": "tool_result", "tool_use_id": call_id, "content": msg }));
+                    }
+                    _ => { tool_results.push(serde_json::json!({ "type": "tool_result", "tool_use_id": call_id, "content": "unknown tool" })); }
+                }
+            }
+            conversation.push(serde_json::json!({ "role": "user", "content": tool_results }));
+            continue;
+        }
+        break;
+    }
+
+    emit_pipeline_phase(&app, &stream_id, "code", "Code Agent", "done", &code_output);
+
+    // ── Phase 3: Reviewers ────────────────────────────────────────
+    let mut has_issues = false;
+    let mut issues_text = String::new();
+
+    for reviewer_id in &selected_reviewers {
+        let display = reviewer_display_name(reviewer_id);
+        emit_pipeline_phase(&app, &stream_id, reviewer_id, display, "running", "");
+
+        let rev_system = reviewer_system_prompt(reviewer_id, project_name.as_deref());
+        let rev_prompt = format!(
+            "## Original Task\n{task}\n\n## Architecture Plan\n{plan_text}\n\n\
+             ## Code Agent Output\n{code_output}\n\nBitte reviewe das aus deiner Perspektive.",
+        );
+        let chunk_ev = format!("pipeline-chunk-{}", stream_id);
+        let review = call_claude_simple(
+            &client, &api_key, &model, &rev_system, &rev_prompt,
+            &app, Some(chunk_ev),
+        ).await.unwrap_or_else(|e| format!("[Reviewer error: {}]", e));
+
+        let needs_fix = review.contains("NEEDS_CHANGES") || review.contains("blocked");
+        if needs_fix {
+            has_issues = true;
+            issues_text.push_str(&format!("\n\n## Findings from {display}\n{review}"));
+        }
+
+        let status = if needs_fix { "needs_changes" } else { "pass" };
+        emit_pipeline_phase(&app, &stream_id, reviewer_id, display, status, &review);
+    }
+
+    // ── Phase 4: Fix Agent (if needed) ───────────────────────────
+    if has_issues {
+        emit_pipeline_phase(&app, &stream_id, "fix", "Fix Agent", "running", "");
+        let fix_system = build_system_prompt(project_path.as_deref(), project_name.as_deref(), enable_tools);
+        let fix_prompt = format!(
+            "## Original Task\n{task}\n\n## Reviewer Findings\n{issues_text}\n\n\
+             Bitte behebe alle aufgezeigten Probleme minimal und zielgerichtet.",
+        );
+        let chunk_ev = format!("pipeline-chunk-{}", stream_id);
+        let fix_output = call_claude_simple(
+            &client, &api_key, &model, &fix_system, &fix_prompt,
+            &app, Some(chunk_ev),
+        ).await.unwrap_or_else(|e| format!("[Fix error: {}]", e));
+        emit_pipeline_phase(&app, &stream_id, "fix", "Fix Agent", "done", &fix_output);
+    }
+
+    // ── Done ──────────────────────────────────────────────────────
+    let final_status = if has_issues { "fixed" } else { "done" };
+    app.emit(&format!("pipeline-done-{}", stream_id), serde_json::json!({
+        "status": final_status,
+        "phases": 2 + selected_reviewers.len() + if has_issues { 1 } else { 0 }
+    })).ok();
+
+    logs.push(LogLevel::Success,
+        format!("Pipeline done — status: {final_status}, reviewers: {}", selected_reviewers.len()),
+        "pipeline");
     Ok(())
 }
 

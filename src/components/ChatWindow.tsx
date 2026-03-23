@@ -2,22 +2,39 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  ArrowRight,
   Camera,
   CheckCircle,
   ChevronDown,
   ChevronRight,
+  ClipboardList,
   Code2,
+  Database,
+  Eye,
+  FileText,
   FlaskConical,
+  GitBranch,
+  Globe,
   Image,
+  Layers,
   Loader,
+  Lock,
+  Network,
   Palette,
+  Pencil,
+  RotateCcw,
+  Search,
   Send,
+  Server,
+  Shield,
+  Table2,
   Terminal,
   Trash2,
+  TrendingUp,
   Upload,
+  Users,
   XCircle,
-  GitBranch,
-  ArrowRight,
+  Zap,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../stores/store";
@@ -71,11 +88,47 @@ export default function ChatWindow() {
     loadChatModels,
   } = useStore();
 
-  type AgentMode = "code" | "design" | "test";
+  type AgentMode =
+    | "code" | "design" | "test"
+    | "planning" | "ux" | "accessibility" | "security"
+    | "data" | "api" | "performance" | "content"
+    | "devops" | "refactor" | "seo" | "conversion"
+    | "rbac" | "table_workflow" | "forms";
+
+  interface AgentDef { id: AgentMode; label: string; icon: React.ReactNode; color: string; group: string; desc: string }
+
+  const AGENTS: AgentDef[] = [
+    // Entwicklung
+    { id: "code",          label: "Code",          icon: <Code2 size={11} />,        color: "text-accent-blue",   group: "Entwicklung",  desc: "Entwickelt & deployt" },
+    { id: "planning",      label: "Planung",        icon: <Layers size={11} />,       color: "text-accent-purple", group: "Entwicklung",  desc: "Architektur & Feature-Plan" },
+    { id: "refactor",      label: "Refactor",       icon: <RotateCcw size={11} />,    color: "text-accent-blue",   group: "Entwicklung",  desc: "Duplikate, Dead Code, Naming" },
+    // Design & UX
+    { id: "design",        label: "Design",         icon: <Palette size={11} />,      color: "text-accent-purple", group: "Design & UX",  desc: "Design-Brief & Styleguide" },
+    { id: "ux",            label: "UX/Product",     icon: <Users size={11} />,        color: "text-accent-purple", group: "Design & UX",  desc: "User Flows & Jobs-to-be-done" },
+    { id: "content",       label: "Content",        icon: <Pencil size={11} />,       color: "text-accent-yellow", group: "Design & UX",  desc: "Texte, CTAs, Error Messages" },
+    // Qualität
+    { id: "test",          label: "Test",           icon: <FlaskConical size={11} />, color: "text-accent-green",  group: "Qualität",     desc: "Screenshot-Tests & UI-Checks" },
+    { id: "accessibility", label: "Accessibility",  icon: <Eye size={11} />,          color: "text-accent-green",  group: "Qualität",     desc: "WCAG, Keyboard, ARIA" },
+    { id: "security",      label: "Security",       icon: <Shield size={11} />,       color: "text-accent-red",    group: "Qualität",     desc: "Auth, XSS, CSRF, SQLi" },
+    { id: "performance",   label: "Performance",    icon: <Zap size={11} />,          color: "text-accent-yellow", group: "Qualität",     desc: "Bundle, N+1, Core Web Vitals" },
+    // Daten & API
+    { id: "data",          label: "Data/DB",        icon: <Database size={11} />,     color: "text-accent-blue",   group: "Daten & API",  desc: "Schema, Migrations, Indizes" },
+    { id: "api",           label: "API",            icon: <Network size={11} />,      color: "text-accent-blue",   group: "Daten & API",  desc: "Contracts, Pagination, Errors" },
+    // Deployment
+    { id: "devops",        label: "DevOps",         icon: <Server size={11} />,       color: "text-accent-purple", group: "Deployment",   desc: "CI/CD, Docker, Monitoring" },
+    // Website
+    { id: "seo",           label: "SEO",            icon: <Search size={11} />,       color: "text-accent-green",  group: "Website",      desc: "Meta, Schema, Crawlability" },
+    { id: "conversion",    label: "Conversion",     icon: <TrendingUp size={11} />,   color: "text-accent-yellow", group: "Website",      desc: "CTA, Funnel, Trust Signals" },
+    // Admin Panel
+    { id: "rbac",          label: "RBAC",           icon: <Lock size={11} />,         color: "text-accent-red",    group: "Admin Panel",  desc: "Permissions, Multi-Tenant" },
+    { id: "table_workflow",label: "Table/Workflow", icon: <Table2 size={11} />,       color: "text-accent-blue",   group: "Admin Panel",  desc: "Filter, Bulk Actions, Export" },
+    { id: "forms",         label: "Forms",          icon: <ClipboardList size={11} />,color: "text-accent-purple", group: "Admin Panel",  desc: "Validation, Autosave, Dirty" },
+  ];
 
   const [input, setInput] = useState("");
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [showAgentDropdown, setShowAgentDropdown] = useState(false);
   const [commitMsg, setCommitMsg] = useState("");
   const [commitLoading, setCommitLoading] = useState(false);
   const [agentMode, setAgentMode] = useState<AgentMode>("code");
@@ -336,31 +389,45 @@ export default function ChatWindow() {
           </div>
         )}
 
-        {/* Agent mode switcher */}
-        <div className="flex items-center gap-1 rounded-lg p-0.5"
-          style={{ background: "var(--surface-2)" }}>
-          {(["code", "design", "test"] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => setAgentMode(m)}
-              title={m === "code" ? "Code Agent — entwickelt & deployt" : m === "design" ? "Design Agent — erstellt Design-Brief" : "Test Agent — Screenshot-basiertes Testing"}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[10px] font-medium transition ${
-                agentMode === m
-                  ? m === "code"
-                    ? "bg-accent-blue/20 text-accent-blue"
-                    : m === "design"
-                    ? "bg-accent-purple/20 text-accent-purple"
-                    : "bg-accent-green/20 text-accent-green"
-                  : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
-              }`}
-            >
-              {m === "code"   && <Code2 size={10} />}
-              {m === "design" && <Palette size={10} />}
-              {m === "test"   && <FlaskConical size={10} />}
-              {m === "code" ? "Code" : m === "design" ? "Design" : "Test"}
-            </button>
-          ))}
-        </div>
+        {/* Agent mode dropdown */}
+        {(() => {
+          const current = AGENTS.find(a => a.id === agentMode) ?? AGENTS[0];
+          return (
+            <div className="relative">
+              <button
+                onClick={() => setShowAgentDropdown(v => !v)}
+                className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition hover:bg-[var(--surface-2)]"
+                style={{ borderColor: "var(--border-color)", color: "var(--text-secondary)" }}
+              >
+                <span className={current.color}>{current.icon}</span>
+                <span className="font-medium text-[var(--text-primary)]">{current.label}</span>
+                <ChevronDown size={10} />
+              </button>
+              {showAgentDropdown && (
+                <div className="absolute left-0 top-full z-30 mt-1 w-60 rounded-xl border shadow-xl overflow-y-auto max-h-[80vh]"
+                  style={{ background: "var(--surface-1)", borderColor: "var(--border-color)" }}>
+                  {Array.from(new Set(AGENTS.map(a => a.group))).map(group => (
+                    <div key={group}>
+                      <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">{group}</div>
+                      {AGENTS.filter(a => a.group === group).map(agent => (
+                        <button key={agent.id}
+                          onClick={() => { setAgentMode(agent.id); setShowAgentDropdown(false); }}
+                          className={`flex w-full items-start gap-2.5 px-3 py-2 text-left transition hover:bg-[var(--surface-2)] ${agentMode === agent.id ? "bg-[var(--surface-2)]" : ""}`}
+                        >
+                          <span className={`mt-0.5 shrink-0 ${agent.color}`}>{agent.icon}</span>
+                          <div className="min-w-0">
+                            <div className="text-xs font-medium text-[var(--text-primary)]">{agent.label}</div>
+                            <div className="text-[10px] text-[var(--text-muted)] truncate">{agent.desc}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* bash tool indicator (code mode only) */}
         {selectedProject && agentMode === "code" && (
@@ -385,38 +452,30 @@ export default function ChatWindow() {
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {chatMessages.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center py-16 text-center">
-            <div className={`mb-3 flex h-12 w-12 items-center justify-center rounded-2xl ${
-              agentMode === "design" ? "bg-accent-purple/10 text-accent-purple" :
-              agentMode === "test"   ? "bg-accent-green/10 text-accent-green" :
-              "bg-accent-blue/10 text-accent-blue"
-            }`}>
-              {agentMode === "design" ? <Palette size={22} /> : agentMode === "test" ? <FlaskConical size={22} /> : <span className="text-xl">✦</span>}
-            </div>
-            <p className="mb-1 text-sm font-medium text-[var(--text-primary)]">
-              {agentMode === "design" ? "Design Agent" : agentMode === "test" ? "Test Agent" : "Code Agent"}
-            </p>
-            <p className="text-xs text-[var(--text-secondary)] max-w-xs">
-              {agentMode === "design"
-                ? "Beschreibe dein Projekt oder schicke Design-Screenshots. Ich erstelle einen strukturierten Design-Brief mit Farben, Typografie und Komponenten."
-                : agentMode === "test"
-                ? "Ich mache einen Screenshot und analysiere das aktuelle Projekt auf Fehler, Layout-Probleme und UI-Inkonsistenzen."
-                : "Wähle ein Projekt und starte. Claude kann Pakete installieren, Dateien lesen und Befehle ausführen. ⌘↵ zum Senden."}
-            </p>
-            {selectedProject && (
-              <p className="mt-2 text-xs text-[var(--text-muted)]">
-                Projekt: <span className="font-mono" style={{ color: agentMode === "design" ? "var(--accent-purple)" : agentMode === "test" ? "var(--accent-green)" : "var(--accent-blue)" }}>{selectedProject.name}</span>
-              </p>
-            )}
-            {agentMode === "test" && selectedProject && (
-              <button
-                onClick={runTestAgent}
-                disabled={testRunning || chatStreaming}
-                className="mt-4 flex items-center gap-2 rounded-xl bg-accent-green/15 px-4 py-2 text-sm text-accent-green hover:bg-accent-green/25 disabled:opacity-40"
-              >
-                {testRunning ? <Loader size={14} className="animate-spin" /> : <FlaskConical size={14} />}
-                Jetzt testen
-              </button>
-            )}
+            {(() => {
+              const agentDef = AGENTS.find(a => a.id === agentMode) ?? AGENTS[0];
+              return (
+                <>
+                  <div className={`mb-3 flex h-12 w-12 items-center justify-center rounded-2xl ${agentDef.color.replace("text-", "bg-").replace("accent-", "accent-") + "/10"}`}>
+                    <span className={`${agentDef.color} text-xl`}>{agentDef.icon}</span>
+                  </div>
+                  <p className="mb-1 text-sm font-medium text-[var(--text-primary)]">{agentDef.label} Agent</p>
+                  <p className="text-xs text-[var(--text-secondary)] max-w-xs">{agentDef.desc}</p>
+                  {selectedProject && (
+                    <p className="mt-2 text-xs text-[var(--text-muted)]">
+                      Projekt: <span className={`font-mono ${agentDef.color}`}>{selectedProject.name}</span>
+                    </p>
+                  )}
+                  {agentMode === "test" && selectedProject && (
+                    <button onClick={runTestAgent} disabled={testRunning || chatStreaming}
+                      className="mt-4 flex items-center gap-2 rounded-xl bg-accent-green/15 px-4 py-2 text-sm text-accent-green hover:bg-accent-green/25 disabled:opacity-40">
+                      {testRunning ? <Loader size={14} className="animate-spin" /> : <FlaskConical size={14} />}
+                      Jetzt testen
+                    </button>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
 
