@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CodeOS",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "dev.codeos.manager",
   "build": {
     "frontendDist": "../dist",
@@ -41,17 +41,6 @@
     "macOS": {
       "minimumSystemVersion": "12.0",
       "signingIdentity": null
-    }
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "PLACEHOLDER_REPLACE_WITH_TAURI_UPDATER_PUBKEY",
-      "endpoints": [
-        "https://github.com/YOUR_ORG/codeos/releases/latest/download/update-manifest.json"
-      ],
-      "windows": {
-        "installMode": "passive"
-      }
     }
   }
 }
