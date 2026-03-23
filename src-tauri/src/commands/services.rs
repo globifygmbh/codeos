@@ -112,10 +112,18 @@ fn brew_services_list() -> Result<(Vec<BrewServiceEntry>, String, String), Strin
         .output()
         .map_err(|e| format!("Failed to run `{} services list`: {}", brew, e))?;
     let raw = String::from_utf8_lossy(&out.stdout).to_string();
+    let err_raw = String::from_utf8_lossy(&out.stderr).to_string();
+    let exit = out.status.code().unwrap_or(-1);
+    let debug_info = format!(
+        "exit={} stdout={:?} stderr={:?}",
+        exit,
+        raw.trim(),
+        err_raw.trim()
+    );
     if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        return Err(err_raw.trim().to_string());
     }
-    Ok((parse_brew_services_list(&raw), brew, raw))
+    Ok((parse_brew_services_list(&raw), brew, debug_info))
 }
 
 fn brew_service_action(action: &str, service_name: &str) -> Result<String, String> {
