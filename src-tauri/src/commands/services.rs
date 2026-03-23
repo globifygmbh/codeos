@@ -5,6 +5,40 @@ use crate::config;
 use crate::log_store::LogStore;
 use crate::models::{LogLevel, ServiceState, ServiceStatus};
 
+// ── Prefix resolution ─────────────────────────────────────────────────────────
+
+/// Return a valid Homebrew prefix with packages installed.
+/// If the stored prefix has a non-empty Cellar, use it.
+/// Otherwise probe known locations and return the one with packages.
+fn resolve_prefix(stored: &Option<String>) -> String {
+    if let Some(p) = stored {
+        if has_cellar(p) {
+            return p.clone();
+        }
+    }
+    for brew in &["/opt/homebrew/bin/brew", "/usr/local/bin/brew"] {
+        if !std::path::Path::new(brew).exists() {
+            continue;
+        }
+        if let Ok(out) = Command::new(brew).arg("--prefix").output() {
+            if out.status.success() {
+                let prefix = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if has_cellar(&prefix) {
+                    return prefix;
+                }
+            }
+        }
+    }
+    stored.clone().unwrap_or_else(|| "/usr/local".to_string())
+}
+
+fn has_cellar(prefix: &str) -> bool {
+    let cellar = format!("{}/Cellar", prefix);
+    std::fs::read_dir(&cellar)
+        .map(|mut rd| rd.next().is_some())
+        .unwrap_or(false)
+}
+
 // ── Installation check ────────────────────────────────────────────────────────
 
 /// Returns true if the given Homebrew formula is installed.
@@ -160,7 +194,7 @@ fn brew_service_action(prefix: &str, action: &str, service_name: &str) -> Result
 #[tauri::command]
 pub async fn get_all_services_status(logs: State<'_, LogStore>) -> Result<Vec<ServiceStatus>, String> {
     let cfg = config::load_config().map_err(|e| e.to_string())?;
-    let prefix = cfg.homebrew_prefix.clone().unwrap_or_else(|| "/opt/homebrew".to_string());
+    let prefix = resolve_prefix(&cfg.homebrew_prefix);
 
     logs.push(LogLevel::Debug, format!("Checking services (prefix: {})", prefix), "services");
 

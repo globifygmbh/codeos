@@ -51,18 +51,10 @@ fn run_version_at(path: &str, args: &[&str]) -> Option<String> {
         })
 }
 
-fn detect_homebrew_prefix() -> Option<String> {
-    // Filesystem checks first — no PATH dependency.
-    if std::path::Path::new("/opt/homebrew/bin/brew").exists() {
-        return Some("/opt/homebrew".to_string());
-    }
-    if std::path::Path::new("/usr/local/bin/brew").exists() {
-        return Some("/usr/local".to_string());
-    }
-    // Fall back to running brew itself with augmented PATH.
-    Command::new("brew")
+/// Run `{brew} --prefix` and return the trimmed output.
+fn brew_prefix_of(brew: &str) -> Option<String> {
+    Command::new(brew)
         .arg("--prefix")
-        .env("PATH", brew_path())
         .output()
         .ok()
         .and_then(|o| {
@@ -73,6 +65,36 @@ fn detect_homebrew_prefix() -> Option<String> {
                 None
             }
         })
+}
+
+/// Return true if `prefix` has a non-empty Cellar (i.e. packages are installed).
+fn prefix_has_packages(prefix: &str) -> bool {
+    let cellar = format!("{}/Cellar", prefix);
+    std::fs::read_dir(&cellar)
+        .map(|mut rd| rd.next().is_some())
+        .unwrap_or(false)
+}
+
+fn detect_homebrew_prefix() -> Option<String> {
+    // For each known brew binary, ask it for its prefix.
+    // Prefer the prefix that actually has packages installed (non-empty Cellar).
+    let candidates = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"];
+    let mut fallback: Option<String> = None;
+
+    for brew in &candidates {
+        if !std::path::Path::new(brew).exists() {
+            continue;
+        }
+        if let Some(prefix) = brew_prefix_of(brew) {
+            if prefix_has_packages(&prefix) {
+                return Some(prefix);
+            }
+            if fallback.is_none() {
+                fallback = Some(prefix);
+            }
+        }
+    }
+    fallback
 }
 
 #[tauri::command]
