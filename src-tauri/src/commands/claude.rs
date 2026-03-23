@@ -93,7 +93,7 @@ fn content_to_api_value(content: &ChatContent) -> serde_json::Value {
     }
 }
 
-// ── System prompt ─────────────────────────────────────────────────────────────
+// ── System prompts ────────────────────────────────────────────────────────────
 
 fn build_system_prompt(
     project_path: Option<&str>,
@@ -138,6 +138,70 @@ fn build_system_prompt(
              - Create any access credentials the user might need later\n\
              This ensures the user never has to ask you to repeat credentials.",
         );
+    }
+
+    system
+}
+
+fn build_test_system_prompt(project_name: Option<&str>) -> String {
+    let mut system = String::from(
+        "You are a QA test agent embedded in CodeOS. Your job is to analyse screenshots of \
+         web projects and identify issues.\n\n\
+         When given a screenshot, you:\n\
+         1. **Describe what you see** — what page/section is shown, key UI elements visible\n\
+         2. **Identify issues** — broken layouts, misaligned elements, wrong colours, missing \
+            content, overlapping elements, console errors visible on screen, 404 pages, \
+            empty states that shouldn't be empty, etc.\n\
+         3. **Rate severity** — Critical (breaks functionality), Major (visible bug), \
+            Minor (cosmetic issue), OK (no issues found)\n\
+         4. **Ask for fix** — if issues were found, end with: \
+            \"Soll ich diese Probleme direkt beheben? (Wechsle zum Code-Agent zum Umsetzen)\"\n\n\
+         Be specific and actionable. Reference exact element positions (top-right, \
+         below the header, etc.). Keep your analysis concise.\n\
+         Respond in the same language as the user.",
+    );
+
+    if let Some(name) = project_name {
+        system.push_str(&format!("\n\n## Project under test: {name}"));
+    }
+
+    system
+}
+
+fn build_design_system_prompt(project_name: Option<&str>) -> String {
+    let mut system = String::from(
+        "You are a senior UI/UX designer and design consultant embedded in CodeOS. \
+         Your role is to help define the visual identity and design system for web projects \
+         before any code is written.\n\n\
+         When the user describes their project or shares design inspiration images, you:\n\
+         1. **Analyse the visual style** — identify colour palette, typography, spacing, \
+            component patterns, motion/animation style, overall mood (minimal, bold, dark, etc.)\n\
+         2. **Describe design references** — suggest specific established design systems, \
+            UI libraries, or well-known sites with a similar aesthetic. Be concrete \
+            (e.g. \"similar to Linear's dark dashboard\", \"Stripe's clean documentation style\", \
+            \"Vercel's monochrome minimal aesthetic\").\n\
+         3. **Produce a structured Design Brief** with the following sections:\n\
+            - **Visual Style** — mood, personality keywords, overall direction\n\
+            - **Colour Palette** — primary, secondary, accent, background, text colours \
+              as hex values with semantic names (e.g. `--color-primary: #6366f1`)\n\
+            - **Typography** — heading font, body font, font sizes scale, weights\n\
+            - **Spacing & Layout** — grid system, spacing scale, border-radius style\n\
+            - **Components** — list key UI components needed (nav, cards, buttons, forms, etc.) \
+              with a brief visual description for each\n\
+            - **CSS Variables** — a ready-to-use `:root {}` block the developer can paste in\n\
+            - **Tailwind Config** — relevant Tailwind `theme.extend` entries if applicable\n\
+            - **Key Libraries** — recommend specific npm packages (e.g. Framer Motion for \
+              animations, a specific icon set, a specific component library)\n\
+         4. End your brief with a **\"🚀 Bereit für den Code-Agent\"** section summarising in \
+            2–3 sentences what the code agent should build first.\n\n\
+         Be visual and inspiring. Give hex codes, real font names (Google Fonts are fine), \
+         and concrete library names. Avoid vague language like \"modern\" without backing it up \
+         with specific design decisions.\n\
+         Respond in the same language as the user (German if they write German, English if English).",
+    );
+
+    if let Some(name) = project_name {
+        system.push_str(&format!("\n\n## Project: {name}"));
     }
 
     system
@@ -337,6 +401,7 @@ pub async fn claude_send_message(
     project_path: Option<String>,
     project_id: Option<String>,
     project_name: Option<String>,
+    mode: Option<String>,
     stream_id: String,
     logs: State<'_, LogStore>,
 ) -> Result<(), String> {
@@ -349,9 +414,18 @@ pub async fn claude_send_message(
         _ => "claude-sonnet-4-6".to_string(),
     };
 
-    // Enable tool use only when a project with a path is selected
-    let enable_tools = project_path.is_some();
-    let system = build_system_prompt(project_path.as_deref(), project_name.as_deref(), enable_tools);
+    let is_design_mode = mode.as_deref() == Some("design");
+    let is_test_mode   = mode.as_deref() == Some("test");
+
+    // Enable tool use only in code mode when a project path is selected
+    let enable_tools = project_path.is_some() && !is_design_mode && !is_test_mode;
+    let system = if is_design_mode {
+        build_design_system_prompt(project_name.as_deref())
+    } else if is_test_mode {
+        build_test_system_prompt(project_name.as_deref())
+    } else {
+        build_system_prompt(project_path.as_deref(), project_name.as_deref(), enable_tools)
+    };
 
     let mut conversation: Vec<serde_json::Value> = messages
         .iter()

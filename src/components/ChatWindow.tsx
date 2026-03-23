@@ -6,14 +6,18 @@ import {
   CheckCircle,
   ChevronDown,
   ChevronRight,
+  Code2,
+  FlaskConical,
   Image,
   Loader,
+  Palette,
   Send,
   Terminal,
   Trash2,
   Upload,
   XCircle,
   GitBranch,
+  ArrowRight,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../stores/store";
@@ -67,11 +71,15 @@ export default function ChatWindow() {
     loadChatModels,
   } = useStore();
 
+  type AgentMode = "code" | "design" | "test";
+
   const [input, setInput] = useState("");
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [commitMsg, setCommitMsg] = useState("");
   const [commitLoading, setCommitLoading] = useState(false);
+  const [agentMode, setAgentMode] = useState<AgentMode>("code");
+  const [testRunning, setTestRunning] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -156,6 +164,7 @@ export default function ChatWindow() {
         projectPath: selectedProject?.path ?? null,
         projectId: selectedProject?.id ?? null,
         projectName: selectedProject?.name ?? null,
+        mode: agentMode,
         streamId,
       });
     } catch (e) {
@@ -205,6 +214,66 @@ export default function ChatWindow() {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       sendMessage();
+    }
+  }
+
+  // Switch to code mode and pre-fill the design brief as context
+  function forwardDesignToCode() {
+    const lastAssistant = [...chatMessages].reverse().find((m) => m.role === "assistant");
+    const brief = lastAssistant ? getTextContent(lastAssistant) : "";
+    setAgentMode("code");
+    setInput(
+      brief
+        ? `Basierend auf folgendem Design-Brief, bitte beginne mit der Umsetzung des Projekts:\n\n${brief.slice(0, 1200)}${brief.length > 1200 ? "\n\n[…Design-Brief gekürzt…]" : ""}\n\nStarte mit der Projektstruktur, CSS-Design-System und den Hauptkomponenten.`
+        : "Bitte beginne jetzt mit der Umsetzung des Projekts basierend auf dem Design-Brief."
+    );
+    setTimeout(() => textareaRef.current?.focus(), 50);
+  }
+
+  // Run the test agent: take screenshot(s) and ask Claude to verify the UI
+  async function runTestAgent() {
+    if (!selectedProject || testRunning || chatStreaming) return;
+    setTestRunning(true);
+    try {
+      const screenshotData = await invoke<string>("take_screenshot");
+      const userMsg: ChatMessage = {
+        id: uid(),
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/png", data: screenshotData } },
+          {
+            type: "text",
+            text: `Du bist ein Test-Agent für das Projekt "${selectedProject.name}". Analysiere den Screenshot des aktuellen Projekts und prüfe:\n1. Gibt es sichtbare Fehler, Layout-Probleme oder fehlende Elemente?\n2. Sieht die Oberfläche so aus, wie sie sein sollte?\n3. Gibt es Konsistenzprobleme (Farben, Abstände, Typografie)?\n\nFasse deine Befunde strukturiert zusammen. Wenn du Probleme findest, frage kurz nach, ob du sie direkt beheben sollst.`,
+          },
+        ],
+      };
+      addChatMessage(userMsg);
+
+      const streamId = uid();
+      const assistantMsg: ChatMessage = { id: uid(), role: "assistant", content: "", streaming: true };
+      addChatMessage(assistantMsg);
+
+      const unlistenChunk = await listen<string>(`claude-chunk-${streamId}`, (ev) => updateLastAssistantMessage(ev.payload, false));
+      const unlistenDone  = await listen(`claude-done-${streamId}`,          ()    => updateLastAssistantMessage("", true));
+      const unlistenError = await listen<string>(`claude-error-${streamId}`, (ev) => updateLastAssistantMessage(`\n\n⚠ Error: ${ev.payload}`, true));
+
+      const apiMessages = useStore.getState().chatMessages.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
+
+      await invoke("claude_send_message", {
+        messages: apiMessages,
+        model: chatModel,
+        projectPath: selectedProject.path,
+        projectId: selectedProject.id,
+        projectName: selectedProject.name,
+        mode: "test",
+        streamId,
+      });
+
+      unlistenChunk(); unlistenDone(); unlistenError();
+    } catch (e) {
+      useStore.getState().setGlobalError("Test-Agent Fehler: " + String(e));
+    } finally {
+      setTestRunning(false);
     }
   }
 
@@ -267,12 +336,38 @@ export default function ChatWindow() {
           </div>
         )}
 
-        {/* Tool-use indicator */}
-        {selectedProject && (
+        {/* Agent mode switcher */}
+        <div className="flex items-center gap-1 rounded-lg p-0.5"
+          style={{ background: "var(--surface-2)" }}>
+          {(["code", "design", "test"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setAgentMode(m)}
+              title={m === "code" ? "Code Agent — entwickelt & deployt" : m === "design" ? "Design Agent — erstellt Design-Brief" : "Test Agent — Screenshot-basiertes Testing"}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[10px] font-medium transition ${
+                agentMode === m
+                  ? m === "code"
+                    ? "bg-accent-blue/20 text-accent-blue"
+                    : m === "design"
+                    ? "bg-accent-purple/20 text-accent-purple"
+                    : "bg-accent-green/20 text-accent-green"
+                  : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+              }`}
+            >
+              {m === "code"   && <Code2 size={10} />}
+              {m === "design" && <Palette size={10} />}
+              {m === "test"   && <FlaskConical size={10} />}
+              {m === "code" ? "Code" : m === "design" ? "Design" : "Test"}
+            </button>
+          ))}
+        </div>
+
+        {/* bash tool indicator (code mode only) */}
+        {selectedProject && agentMode === "code" && (
           <div className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px]"
             style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
             <Terminal size={10} className="text-accent-purple" />
-            <span>bash-Tool aktiv</span>
+            <span>bash aktiv</span>
           </div>
         )}
 
@@ -290,19 +385,37 @@ export default function ChatWindow() {
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {chatMessages.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center py-16 text-center">
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-blue/10 text-accent-blue">
-              <span className="text-xl">✦</span>
+            <div className={`mb-3 flex h-12 w-12 items-center justify-center rounded-2xl ${
+              agentMode === "design" ? "bg-accent-purple/10 text-accent-purple" :
+              agentMode === "test"   ? "bg-accent-green/10 text-accent-green" :
+              "bg-accent-blue/10 text-accent-blue"
+            }`}>
+              {agentMode === "design" ? <Palette size={22} /> : agentMode === "test" ? <FlaskConical size={22} /> : <span className="text-xl">✦</span>}
             </div>
-            <p className="mb-1 text-sm font-medium text-[var(--text-primary)]">Claude AI</p>
-            <p className="text-xs text-[var(--text-secondary)]">
-              Wähle ein Projekt und starte. Claude kann Pakete installieren, Dateien lesen und Befehle ausführen. ⌘↵ zum Senden.
+            <p className="mb-1 text-sm font-medium text-[var(--text-primary)]">
+              {agentMode === "design" ? "Design Agent" : agentMode === "test" ? "Test Agent" : "Code Agent"}
+            </p>
+            <p className="text-xs text-[var(--text-secondary)] max-w-xs">
+              {agentMode === "design"
+                ? "Beschreibe dein Projekt oder schicke Design-Screenshots. Ich erstelle einen strukturierten Design-Brief mit Farben, Typografie und Komponenten."
+                : agentMode === "test"
+                ? "Ich mache einen Screenshot und analysiere das aktuelle Projekt auf Fehler, Layout-Probleme und UI-Inkonsistenzen."
+                : "Wähle ein Projekt und starte. Claude kann Pakete installieren, Dateien lesen und Befehle ausführen. ⌘↵ zum Senden."}
             </p>
             {selectedProject && (
               <p className="mt-2 text-xs text-[var(--text-muted)]">
-                Projekt: <span className="text-accent-blue font-mono">{selectedProject.name}</span>
-                {" · "}
-                <span className="text-accent-purple">bash-Tool verfügbar</span>
+                Projekt: <span className="font-mono" style={{ color: agentMode === "design" ? "var(--accent-purple)" : agentMode === "test" ? "var(--accent-green)" : "var(--accent-blue)" }}>{selectedProject.name}</span>
               </p>
+            )}
+            {agentMode === "test" && selectedProject && (
+              <button
+                onClick={runTestAgent}
+                disabled={testRunning || chatStreaming}
+                className="mt-4 flex items-center gap-2 rounded-xl bg-accent-green/15 px-4 py-2 text-sm text-accent-green hover:bg-accent-green/25 disabled:opacity-40"
+              >
+                {testRunning ? <Loader size={14} className="animate-spin" /> : <FlaskConical size={14} />}
+                Jetzt testen
+              </button>
             )}
           </div>
         )}
@@ -312,6 +425,38 @@ export default function ChatWindow() {
         ))}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* ── Design → Code handoff bar ─────────────────────────────────────────── */}
+      {agentMode === "design" && chatMessages.some((m) => m.role === "assistant") && !chatStreaming && (
+        <div className="shrink-0 border-t px-5 py-2.5 flex items-center gap-3"
+          style={{ borderColor: "var(--border-color)", background: "var(--surface-1)" }}>
+          <Palette size={13} className="text-accent-purple shrink-0" />
+          <span className="flex-1 text-xs text-[var(--text-secondary)]">Design-Brief bereit — an Code-Agent übergeben?</span>
+          <button
+            onClick={forwardDesignToCode}
+            className="flex items-center gap-1.5 rounded-lg bg-accent-blue/15 px-3 py-1.5 text-xs text-accent-blue hover:bg-accent-blue/25"
+          >
+            <ArrowRight size={11} /> Mit Code-Agent umsetzen
+          </button>
+        </div>
+      )}
+
+      {/* ── Test Agent quick-start bar ─────────────────────────────────────────── */}
+      {agentMode === "test" && selectedProject && !chatStreaming && !testRunning && chatMessages.length === 0 && (
+        <div className="shrink-0 border-t px-5 py-2.5 flex items-center gap-3"
+          style={{ borderColor: "var(--border-color)", background: "var(--surface-1)" }}>
+          <FlaskConical size={13} className="text-accent-green shrink-0" />
+          <span className="flex-1 text-xs text-[var(--text-secondary)]">Screenshot aufnehmen und UI auf Fehler prüfen</span>
+          <button
+            onClick={runTestAgent}
+            disabled={testRunning}
+            className="flex items-center gap-1.5 rounded-lg bg-accent-green/15 px-3 py-1.5 text-xs text-accent-green hover:bg-accent-green/25 disabled:opacity-40"
+          >
+            {testRunning ? <Loader size={11} className="animate-spin" /> : <FlaskConical size={11} />}
+            Test starten
+          </button>
+        </div>
+      )}
 
       {/* ── Commit & Push bar ─────────────────────────────────────────────────── */}
       {selectedProject && gitStatus && (gitStatus.modified_files.length > 0 || gitStatus.staged_files.length > 0) && (
@@ -372,6 +517,16 @@ export default function ChatWindow() {
               className="rounded-lg p-1.5 text-[var(--text-muted)] transition hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]">
               <Camera size={15} />
             </button>
+            {agentMode === "test" && selectedProject && (
+              <button
+                onClick={runTestAgent}
+                disabled={testRunning || chatStreaming}
+                title="Test Agent starten"
+                className="rounded-lg p-1.5 text-accent-green transition hover:bg-accent-green/10 disabled:opacity-40"
+              >
+                {testRunning ? <Loader size={15} className="animate-spin" /> : <FlaskConical size={15} />}
+              </button>
+            )}
           </div>
 
           <textarea
@@ -379,7 +534,13 @@ export default function ChatWindow() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Claude fragen… (⌘↵ senden) — Claude kann Pakete installieren & Befehle ausführen"
+            placeholder={
+              agentMode === "design"
+                ? "Beschreibe dein Projekt oder den gewünschten Design-Stil… (⌘↵ senden)"
+                : agentMode === "test"
+                ? "Frage zum Test oder Ergebnis…"
+                : "Claude fragen… (⌘↵ senden) — Claude kann Pakete installieren & Befehle ausführen"
+            }
             rows={1}
             className="auto-resize flex-1 bg-transparent text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
           />
@@ -394,7 +555,11 @@ export default function ChatWindow() {
           </button>
         </div>
         <p className="mt-1.5 text-center text-[10px] text-[var(--text-muted)]">
-          ⌘↵ senden · 📎 Bild · 📷 Screenshot · Claude kann bash-Befehle ausführen wenn ein Projekt gewählt ist
+          {agentMode === "design"
+            ? "⌘↵ senden · 📎 Design-Screenshots anhängen · Design-Brief wird am Ende übergeben"
+            : agentMode === "test"
+            ? "⌘↵ senden · 🧪 Test Agent macht Screenshot und analysiert die UI automatisch"
+            : "⌘↵ senden · 📎 Bild · 📷 Screenshot · Claude kann bash-Befehle ausführen wenn ein Projekt gewählt ist"}
         </p>
       </div>
     </div>
