@@ -4,6 +4,7 @@ use tauri::State;
 use crate::config;
 use crate::log_store::LogStore;
 use crate::models::{LogLevel, ServiceState, ServiceStatus};
+use crate::utils::brew_path;
 
 // ── `brew services list` parser ───────────────────────────────────────────────
 
@@ -46,7 +47,7 @@ fn find_service<'a>(entries: &'a [BrewServiceEntry], preferred: &str) -> Option<
 
 fn apache_version(prefix: &str) -> Option<String> {
     let bin = format!("{}/bin/httpd", prefix);
-    let out = Command::new(&bin).arg("-v").output().ok()?;
+    let out = Command::new(&bin).arg("-v").env("PATH", brew_path()).output().ok()?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     // "Server version: Apache/2.4.62 (Homebrew)"
     stdout
@@ -57,13 +58,13 @@ fn apache_version(prefix: &str) -> Option<String> {
 }
 
 fn mysql_version() -> Option<String> {
-    let out = Command::new("mysql").arg("--version").output().ok()?;
+    let out = Command::new("mysql").arg("--version").env("PATH", brew_path()).output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout);
     Some(s.trim().to_string())
 }
 
 fn php_version() -> Option<String> {
-    let out = Command::new("php").arg("--version").output().ok()?;
+    let out = Command::new("php").arg("--version").env("PATH", brew_path()).output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout);
     s.lines().next().map(|l| l.trim().to_string())
 }
@@ -89,6 +90,7 @@ fn apache_port(prefix: &str) -> Option<u16> {
 fn brew_services_list() -> Result<Vec<BrewServiceEntry>, String> {
     let out = Command::new("brew")
         .args(["services", "list"])
+        .env("PATH", brew_path())
         .output()
         .map_err(|e| format!("Failed to run `brew services list`: {}", e))?;
     if !out.status.success() {
@@ -100,6 +102,7 @@ fn brew_services_list() -> Result<Vec<BrewServiceEntry>, String> {
 fn brew_service_action(action: &str, service_name: &str) -> Result<String, String> {
     let out = Command::new("brew")
         .args(["services", action, service_name])
+        .env("PATH", brew_path())
         .output()
         .map_err(|e| format!("brew services {} failed: {}", action, e))?;
 

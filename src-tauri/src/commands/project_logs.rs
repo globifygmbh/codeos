@@ -8,6 +8,7 @@ use tauri::State;
 use crate::config;
 use crate::log_store::LogStore;
 use crate::models::{CommandOutput, LogLevel, ProjectLogEntry};
+use crate::utils::brew_path;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -62,14 +63,11 @@ fn trim_log_file(path: &PathBuf, keep: usize) {
 pub fn execute_in_dir(working_dir: &str, command: &str) -> CommandOutput {
     let start = Instant::now();
 
-    // Extend PATH so Homebrew tools are available
-    let path_env = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
-
     let output = Command::new("bash")
         .arg("-c")
         .arg(command)
         .current_dir(working_dir)
-        .env("PATH", path_env)
+        .env("PATH", brew_path())
         .env("HOME", dirs::home_dir().unwrap_or_default())
         .output();
 

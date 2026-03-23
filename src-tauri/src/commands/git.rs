@@ -5,6 +5,7 @@ use tauri::State;
 use crate::config;
 use crate::log_store::LogStore;
 use crate::models::{GitStatus, LogLevel};
+use crate::utils::brew_path;
 
 // ── Core git runner ───────────────────────────────────────────────────────────
 
@@ -13,6 +14,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<(String, String), String> {
         .current_dir(dir)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("PATH", brew_path())
         .output()
         .map_err(|e| format!("Failed to run git: {}", e))?;
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -26,7 +28,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<(String, String), String> {
 
 fn git_with_auth(dir: &Path, args: &[&str], token: Option<&str>) -> Result<(String, String), String> {
     let mut cmd = Command::new("git");
-    cmd.current_dir(dir).env("GIT_TERMINAL_PROMPT", "0").args(args);
+    cmd.current_dir(dir).env("GIT_TERMINAL_PROMPT", "0").env("PATH", brew_path()).args(args);
     if let Some(tok) = token {
         cmd.env("GIT_CONFIG_COUNT", "1")
             .env("GIT_CONFIG_KEY_0", "credential.helper")

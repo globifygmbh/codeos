@@ -3,6 +3,7 @@ mod config;
 mod log_store;
 mod models;
 mod updater;
+mod utils;
 
 use log_store::LogStore;
 

@@ -4,6 +4,7 @@ use tauri::State;
 use crate::config;
 use crate::log_store::LogStore;
 use crate::models::{LogLevel, MysqlConfig, QueryResult};
+use crate::utils::brew_path;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -136,6 +137,7 @@ pub async fn mysql_run_query(
 
     let output = Command::new("mysql")
         .args(&args)
+        .env("PATH", brew_path())
         .output()
         .map_err(|e| format!("mysql CLI not found or failed: {}", e))?;
 
@@ -216,6 +218,7 @@ pub async fn mysql_export_database(
 
     let output = Command::new("mysqldump")
         .args(&args)
+        .env("PATH", brew_path())
         .output()
         .map_err(|e| format!("mysqldump not found or failed: {}", e))?;
 

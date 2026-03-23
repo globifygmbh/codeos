@@ -4,16 +4,7 @@ use tauri::State;
 use crate::config;
 use crate::log_store::LogStore;
 use crate::models::{AppConfig, LogLevel, SystemCheck, ToolCheck};
-
-
-/// Augmented PATH that includes all common Homebrew and system binary dirs.
-/// Tauri on macOS inherits a minimal PATH from launchd (~"/usr/bin:/bin:/sbin")
-/// that does not contain /opt/homebrew/bin, so we inject it explicitly for
-/// every child process we spawn.
-fn brew_path() -> String {
-    let base = std::env::var("PATH").unwrap_or_default();
-    format!("/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:{}", base)
-}
+use crate::utils::brew_path;
 
 /// Run `which <cmd>` with the augmented PATH.
 fn which(cmd: &str) -> Option<String> {
