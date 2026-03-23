@@ -139,6 +139,9 @@ pub async fn git_status(project_path: String, _logs: State<'_, LogStore>) -> Res
 #[tauri::command]
 pub async fn git_fetch(project_path: String, logs: State<'_, LogStore>) -> Result<GitStatus, String> {
     let dir = Path::new(&project_path);
+    if !dir.join(".git").exists() {
+        return Err(format!("'{}' is not a git repository", project_path));
+    }
     logs.push(LogLevel::Info, format!("Fetching {}", project_path), "git");
     let token = config::load_github_token().unwrap_or(None);
     git_with_auth(dir, &["fetch", "--all", "--prune"], token.as_deref())
