@@ -187,7 +187,7 @@ export default function ProjectLogPanel({ project }: Props) {
             </p>
           </div>
         ) : (
-          <div className="divide-y" style={{ divideColor: "var(--border-color)" }}>
+          <div className="divide-y" style={{ borderColor: "var(--border-color)" }}>
             {[...filtered].reverse().map((entry, i) => (
               <div
                 key={i}

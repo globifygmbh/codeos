@@ -17,14 +17,14 @@ import type { FileEntry, Project } from "../types";
 
 // ── CodeMirror imports ────────────────────────────────────────────────────────
 import { EditorState } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
+import { EditorView as CMEditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { indentOnInput, syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { javascript } from "@codemirror/lang-javascript";
 import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
+import { html, htmlLanguage } from "@codemirror/lang-html";
 import { php } from "@codemirror/lang-php";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
@@ -39,7 +39,7 @@ function languageExtension(filename: string) {
     case "ts": case "tsx":       return javascript({ typescript: true, jsx: true });
     case "css": case "scss": case "less": return css();
     case "html": case "htm":     return html({ matchClosingTags: true, selfClosingTags: true });
-    case "php":                  return php({ baseLanguage: html() });
+    case "php":                  return php({ baseLanguage: htmlLanguage });
     case "json": case "jsonc":   return json();
     case "md": case "mdx":       return markdown();
     case "sql":                  return sql();
@@ -58,7 +58,7 @@ function languageLabel(filename: string) {
     xml: "XML", yaml: "YAML", yml: "YAML", txt: "Text",
     htaccess: "Apache", gitignore: "GitIgnore",
   };
-  return map[ext] ?? ext.toUpperCase() || "Plain text";
+  return map[ext] ?? (ext.toUpperCase() || "Plain text");
 }
 
 function fileIcon(entry: FileEntry): string {
@@ -194,7 +194,7 @@ interface EditorProps {
 
 function CodeEditor({ content, filename, onChange, isDark }: EditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const viewRef      = useRef<EditorView | null>(null);
+  const viewRef      = useRef<CMEditorView | null>(null);
   const onChangeRef  = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -213,12 +213,12 @@ function CodeEditor({ content, filename, onChange, isDark }: EditorProps) {
       highlightActiveLine(),
       highlightSelectionMatches(),
       keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...foldKeymap, indentWithTab]),
-      EditorView.updateListener.of((update) => {
+      CMEditorView.updateListener.of((update) => {
         if (update.docChanged) {
           onChangeRef.current(update.state.doc.toString());
         }
       }),
-      EditorView.theme({
+      CMEditorView.theme({
         "&": { height: "100%", fontSize: "13px" },
         ".cm-scroller": { fontFamily: "ui-monospace, 'JetBrains Mono', 'Fira Code', monospace", overflow: "auto" },
       }),
@@ -233,7 +233,7 @@ function CodeEditor({ content, filename, onChange, isDark }: EditorProps) {
     if (langExt) extensions.push(langExt);
 
     const state = EditorState.create({ doc: content, extensions });
-    const view  = new EditorView({ state, parent: containerRef.current });
+    const view  = new CMEditorView({ state, parent: containerRef.current });
     viewRef.current = view;
 
     return () => {
