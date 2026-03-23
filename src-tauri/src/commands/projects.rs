@@ -3,7 +3,7 @@ use tauri::State;
 
 use crate::config;
 use crate::log_store::LogStore;
-use crate::models::{AppConfig, LogLevel, Project, ProjectInput};
+use crate::models::{LogLevel, Project, ProjectInput};
 
 fn project_by_id<'a>(projects: &'a mut Vec<Project>, id: &str) -> Option<&'a mut Project> {
     projects.iter_mut().find(|p| p.id == id)
@@ -114,6 +114,7 @@ pub async fn duplicate_project(id: String, logs: State<'_, LogStore>) -> Result<
         updated_at: now(),
         todos: Vec::new(),
         mysql_config: original.mysql_config.clone(),
+        credentials: original.credentials.clone(),
     };
 
     logs.push(LogLevel::Info, format!("Project '{}' duplicated", original.name), "projects");
@@ -181,8 +182,10 @@ pub async fn disable_vhost(project_id: String, logs: State<'_, LogStore>) -> Res
     }
     project.vhost_enabled = false;
     project.updated_at = now();
+    let project_name = project.name.clone();
+    drop(project);
     config::save_config(&cfg).map_err(|e| e.to_string())?;
-    logs.push(LogLevel::Info, format!("VHost disabled for '{}'", project.name), "projects");
+    logs.push(LogLevel::Info, format!("VHost disabled for '{}'", project_name), "projects");
     Ok(())
 }
 

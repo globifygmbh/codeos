@@ -3,7 +3,7 @@ use tauri::State;
 
 use crate::config;
 use crate::log_store::LogStore;
-use crate::models::{LogLevel, TodoItem};
+use crate::models::TodoItem;
 
 fn now() -> String {
     Local::now().to_rfc3339()

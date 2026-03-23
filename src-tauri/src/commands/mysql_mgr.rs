@@ -155,24 +155,6 @@ pub async fn mysql_run_query(
     Ok(result)
 }
 
-/// List all databases accessible with the configured credentials.
-#[tauri::command]
-pub async fn mysql_list_databases(project_id: String) -> Result<Vec<String>, String> {
-    let result = mysql_run_query(
-        project_id,
-        "SHOW DATABASES".to_string(),
-        // We need a fake LogStore here — use a workaround: call the low-level fn
-        // Actually we can't avoid the State param. Let's keep it simple:
-        // This command is called from a separate command, so we duplicate the logic.
-        // See below.
-        tauri::State::from(unsafe { &*(std::ptr::null::<crate::log_store::LogStore>()) }),
-    ).await;
-    // This approach won't compile. Let me implement directly.
-    Err("Use mysql_run_query directly".to_string())
-}
-
-// Note: list_databases, list_tables are just convenience wrappers over mysql_run_query.
-// The frontend calls mysql_run_query("SHOW DATABASES") directly.
 
 /// List all tables in the configured database.
 #[tauri::command]

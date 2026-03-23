@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::config;
 use crate::log_store::LogStore;
-use crate::models::{CredentialEntry, CredentialField, LogLevel};
+use crate::models::{CredentialEntry, LogLevel};
 
 fn now() -> String {
     chrono::Local::now().to_rfc3339()
