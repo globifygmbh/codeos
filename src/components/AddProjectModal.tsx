@@ -18,6 +18,7 @@ export default function AddProjectModal({ onClose }: Props) {
     port: 8080,
     git_remote: "",
     php_version: "",
+    document_root: "",
   });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -49,6 +50,7 @@ export default function AddProjectModal({ onClose }: Props) {
         ...form,
         git_remote: form.git_remote?.trim() || undefined,
         php_version: form.php_version?.trim() || undefined,
+        document_root: form.document_root?.trim() || undefined,
       });
       onClose();
     } catch (e) {
@@ -155,6 +157,21 @@ export default function AddProjectModal({ onClose }: Props) {
               placeholder="8.3"
               className="w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-accent-blue/60"
             />
+          </div>
+
+          {/* Document root */}
+          <div>
+            <label className="mb-1.5 block text-xs text-gray-400">
+              Web root <span className="text-gray-600">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={form.document_root}
+              onChange={(e) => set("document_root", e.target.value)}
+              placeholder="public, dist, frontend, htdocs …"
+              className="w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-sm text-white placeholder-gray-600 font-mono focus:outline-none focus:ring-1 focus:ring-accent-blue/60"
+            />
+            <p className="mt-1 text-[10px] text-gray-600">Subfolder served as document root (e.g. <span className="font-mono">public</span> for Laravel)</p>
           </div>
 
           {error && (

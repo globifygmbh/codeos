@@ -28,7 +28,7 @@ interface Props {
 type Tab = "git" | "todos" | "logs" | "info";
 
 export default function ProjectCard({ project, isSelected, onSelect }: Props) {
-  const { removeProject, renameProject, duplicateProject, gitStatuses } = useStore();
+  const { removeProject, renameProject, duplicateProject, gitStatuses, updateProject } = useStore();
 
   const [showMenu, setShowMenu] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -36,6 +36,28 @@ export default function ProjectCard({ project, isSelected, onSelect }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("git");
   const renameInputRef = useRef<HTMLInputElement>(null);
+
+  const [editingDocRoot, setEditingDocRoot] = useState(false);
+  const [docRootValue, setDocRootValue] = useState(project.document_root ?? "");
+
+  async function handleDocRootSubmit() {
+    const val = docRootValue.trim();
+    setEditingDocRoot(false);
+    if (val === (project.document_root ?? "")) return;
+    try {
+      await updateProject(project.id, {
+        name: project.name,
+        path: project.path,
+        local_url: project.local_url,
+        port: project.port,
+        git_remote: project.git_remote ?? undefined,
+        php_version: project.php_version ?? undefined,
+        document_root: val || undefined,
+      });
+    } catch (e) {
+      useStore.getState().setGlobalError(String(e));
+    }
+  }
 
   const gitStatus: GitStatus | undefined = gitStatuses[project.id];
   const openTodos = (project.todos ?? []).filter((t) => !t.completed).length;
@@ -218,6 +240,34 @@ export default function ProjectCard({ project, isSelected, onSelect }: Props) {
                 <span className="truncate font-mono text-right text-[var(--text-secondary)]">{project.git_remote}</span>
               </div>
             )}
+            <div className="col-span-2 flex items-center justify-between gap-2">
+              <span className="shrink-0 text-[var(--text-muted)]">Web root</span>
+              {editingDocRoot ? (
+                <input
+                  autoFocus
+                  type="text"
+                  value={docRootValue}
+                  onChange={(e) => setDocRootValue(e.target.value)}
+                  onBlur={handleDocRootSubmit}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleDocRootSubmit();
+                    if (e.key === "Escape") { setEditingDocRoot(false); setDocRootValue(project.document_root ?? ""); }
+                  }}
+                  placeholder="public, dist, frontend …"
+                  className="w-44 rounded border px-2 py-0.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-accent-blue/60"
+                  style={{ background: "var(--surface-2)", borderColor: "var(--border-color)", color: "var(--text-primary)" }}
+                />
+              ) : (
+                <button
+                  onClick={() => setEditingDocRoot(true)}
+                  className="flex items-center gap-1 font-mono text-right text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  title="Edit web root"
+                >
+                  <span>{project.document_root || <span className="italic text-[var(--text-muted)]">project root</span>}</span>
+                  <Pencil size={10} className="shrink-0 opacity-40" />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Tab bar */}
