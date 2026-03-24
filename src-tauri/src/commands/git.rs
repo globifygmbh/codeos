@@ -78,7 +78,14 @@ fn parse_status_porcelain(output: &str) -> (Vec<String>, Vec<String>, Vec<String
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn git_clone(url: String, destination: String, logs: State<'_, LogStore>) -> Result<String, String> {
+pub async fn git_clone(url: String, destination: String, force: Option<bool>, logs: State<'_, LogStore>) -> Result<String, String> {
+    let dest_path = Path::new(&destination);
+    if force.unwrap_or(false) && dest_path.exists() {
+        logs.push(LogLevel::Info, format!("Removing existing directory: {}", destination), "git");
+        std::fs::remove_dir_all(dest_path)
+            .map_err(|e| format!("Cannot remove existing directory: {}", e))?;
+    }
+
     logs.push(LogLevel::Info, format!("Cloning {} → {}", url, destination), "git");
     let token = config::load_github_token().unwrap_or(None);
     let effective_url = if let Some(ref tok) = token {
@@ -87,7 +94,7 @@ pub async fn git_clone(url: String, destination: String, logs: State<'_, LogStor
         } else { url.clone() }
     } else { url.clone() };
 
-    let parent = Path::new(&destination).parent()
+    let parent = dest_path.parent()
         .ok_or_else(|| "Invalid destination path".to_string())?;
     std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create parent dir: {}", e))?;
 

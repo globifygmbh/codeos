@@ -35,11 +35,20 @@ export default function GitPanel({ project }: Props) {
   const [cloneTarget, setCloneTarget] = useState(project.path);
   const [cloning, setCloning] = useState(false);
   const [cloneMsg, setCloneMsg] = useState<string | null>(null);
+  // Auto-open clone form if git_remote is set but no repo detected yet
   const [showClone, setShowClone] = useState(false);
+  const [forceClone, setForceClone] = useState(false);
 
   useEffect(() => {
     fetchGitStatus(project.id, project.path);
   }, [project.id, project.path]);
+
+  // Auto-open clone form once we know there's no repo but a remote is configured
+  useEffect(() => {
+    if (!loading && !status && project.git_remote) {
+      setShowClone(true);
+    }
+  }, [loading, status, project.git_remote]);
 
   async function handleClone() {
     setCloning(true);
@@ -48,9 +57,11 @@ export default function GitPanel({ project }: Props) {
       const msg = await invoke<string>("git_clone", {
         url: cloneUrl,
         destination: cloneTarget,
+        force: forceClone,
       });
       setCloneMsg("Cloned: " + msg);
       setShowClone(false);
+      setForceClone(false);
       fetchGitStatus(project.id, project.path);
     } catch (e) {
       setCloneMsg("Error: " + String(e));
@@ -72,6 +83,67 @@ export default function GitPanel({ project }: Props) {
     }
   }
 
+  function openReclone() {
+    setCloneUrl(project.git_remote ?? "");
+    setCloneTarget(project.path);
+    setForceClone(true);
+    setCloneMsg(null);
+    setShowClone(true);
+  }
+
+  const cloneForm = (
+    <div className="mt-3 space-y-2">
+      {forceClone && (
+        <div className="flex items-center gap-2 rounded-md bg-accent-red/10 px-3 py-2 text-xs text-accent-red">
+          <AlertTriangle size={12} />
+          Der bestehende Ordner wird gelöscht und neu geclont.
+        </div>
+      )}
+      <input
+        type="text"
+        value={cloneUrl}
+        onChange={(e) => setCloneUrl(e.target.value)}
+        placeholder="https://github.com/user/repo.git"
+        className="w-full rounded-md border border-white/10 bg-surface-2 px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-accent-blue/60"
+      />
+      <input
+        type="text"
+        value={cloneTarget}
+        onChange={(e) => setCloneTarget(e.target.value)}
+        placeholder="Destination path"
+        className="w-full rounded-md border border-white/10 bg-surface-2 px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-accent-blue/60"
+      />
+      <div className="flex gap-2">
+        <button
+          disabled={cloning || !cloneUrl}
+          onClick={handleClone}
+          className="flex items-center gap-1.5 rounded-md bg-accent-blue px-3 py-1.5 text-xs text-white disabled:opacity-40 hover:bg-accent-blue/80"
+        >
+          {cloning ? <Loader size={11} className="animate-spin" /> : null}
+          {forceClone ? "Löschen & neu clonen" : "Clone"}
+        </button>
+        {!forceClone && (
+          <button
+            disabled={!cloneUrl}
+            onClick={handleSetRemote}
+            className="rounded-md bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/10 disabled:opacity-40"
+          >
+            Link existing repo
+          </button>
+        )}
+        <button
+          onClick={() => { setShowClone(false); setForceClone(false); setCloneMsg(null); }}
+          className="rounded-md bg-white/5 px-3 py-1.5 text-xs text-gray-400 hover:bg-white/10"
+        >
+          Abbrechen
+        </button>
+      </div>
+      {cloneMsg && (
+        <p className="text-xs text-gray-400 log-output">{cloneMsg}</p>
+      )}
+    </div>
+  );
+
   if (!status && !loading) {
     return (
       <div className="rounded-xl border border-white/5 bg-surface-1 p-4">
@@ -91,50 +163,13 @@ export default function GitPanel({ project }: Props) {
             git init
           </button>
           <button
-            onClick={() => setShowClone(true)}
+            onClick={() => { setForceClone(false); setShowClone(true); }}
             className="rounded-md bg-accent-blue/10 px-3 py-1.5 text-xs text-accent-blue hover:bg-accent-blue/20"
           >
             Clone / Link remote
           </button>
         </div>
-        {showClone && (
-          <div className="mt-3 space-y-2">
-            <input
-              type="text"
-              value={cloneUrl}
-              onChange={(e) => setCloneUrl(e.target.value)}
-              placeholder="https://github.com/user/repo.git"
-              className="w-full rounded-md border border-white/10 bg-surface-2 px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-accent-blue/60"
-            />
-            <input
-              type="text"
-              value={cloneTarget}
-              onChange={(e) => setCloneTarget(e.target.value)}
-              placeholder="Destination path"
-              className="w-full rounded-md border border-white/10 bg-surface-2 px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-accent-blue/60"
-            />
-            <div className="flex gap-2">
-              <button
-                disabled={cloning || !cloneUrl}
-                onClick={handleClone}
-                className="flex items-center gap-1.5 rounded-md bg-accent-blue px-3 py-1.5 text-xs text-white disabled:opacity-40 hover:bg-accent-blue/80"
-              >
-                {cloning ? <Loader size={11} className="animate-spin" /> : null}
-                Clone
-              </button>
-              <button
-                disabled={!cloneUrl}
-                onClick={handleSetRemote}
-                className="rounded-md bg-white/5 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/10 disabled:opacity-40"
-              >
-                Link existing repo
-              </button>
-            </div>
-            {cloneMsg && (
-              <p className="text-xs text-gray-400 log-output">{cloneMsg}</p>
-            )}
-          </div>
-        )}
+        {showClone && cloneForm}
       </div>
     );
   }
@@ -152,16 +187,27 @@ export default function GitPanel({ project }: Props) {
     <div className="rounded-xl border border-white/5 bg-surface-1 p-4">
       <div className="mb-3 flex items-center justify-between">
         <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Git</p>
-        <button
-          disabled={loading}
-          onClick={() => fetchGitStatus(project.id, project.path)}
-          className="rounded-md p-1 text-gray-500 hover:bg-white/5 hover:text-gray-300 disabled:opacity-40"
-        >
-          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={openReclone}
+            className="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-white/5 hover:text-gray-300"
+            title="Re-clone repository"
+          >
+            Re-clone
+          </button>
+          <button
+            disabled={loading}
+            onClick={() => fetchGitStatus(project.id, project.path)}
+            className="rounded-md p-1 text-gray-500 hover:bg-white/5 hover:text-gray-300 disabled:opacity-40"
+          >
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
 
-      {status && (
+      {showClone && cloneForm}
+
+      {status && !showClone && (
         <>
           {/* Branch & commit */}
           <div className="mb-3 space-y-1.5">
